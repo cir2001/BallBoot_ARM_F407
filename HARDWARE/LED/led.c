@@ -1,0 +1,58 @@
+#include "led.h" 
+#include <stm32f4xx.h>
+//////////////////////////////////////////////////////////////////////////////////	 
+//	STM32F407开发板 LED0 LED1配置
+//
+//
+//								  
+////////////////////////////////////////////////////////////////////////////////// 	 
+
+//---- LED IO初始化 ----
+void LED_Init(void)
+{    	 
+	//--- 开发板上的LED端口初始化 占用PCB PA6 PA7 对应与rasburry通讯的SPI1的MISO和MOSI引脚 ---
+	//RCC->AHB1ENR|=1<<0;//使能PORTA时钟 
+	//GPIO_Set(GPIOA,PIN6|PIN7,GPIO_MODE_OUT,GPIO_OTYPE_PP,GPIO_SPEED_100M,GPIO_PUPD_PU); //PA6,PA7设置
+
+	//LED0=1;//LED0 0:打开；1：关闭
+	//LED1=1;//LED1关闭
+
+	//--- PCB上的LED端口初始化  ---
+	RCC->AHB1ENR|=1<<2;//使能PORTC时钟 
+	RCC->AHB1ENR|=1<<3;//使能PORTD时钟 
+	RCC->AHB1ENR|=1<<4;//使能PORTE时钟 
+	GPIO_Set(GPIOC,PIN4|PIN5,GPIO_MODE_OUT,GPIO_OTYPE_PP,GPIO_SPEED_100M,GPIO_PUPD_PU); //PC4,PC5设置
+	GPIO_Set(GPIOD,PIN11|PIN12|PIN13|PIN14|PIN15,GPIO_MODE_OUT,GPIO_OTYPE_PP,GPIO_SPEED_100M,GPIO_PUPD_PU); //PD11,PD12,PD13,PD14,PD15设置
+	GPIO_Set(GPIOE,PIN2|PIN8|PIN15,GPIO_MODE_OUT,GPIO_OTYPE_PP,GPIO_SPEED_100M,GPIO_PUPD_PU); //PE2,PE8,PE15设置
+
+	LED_MC=1;   //PE2  LED_MC 关闭
+	LED_RAS=1;  //PE8  LED_RAS 关闭	
+	LED_MPU=1;  //PE15 LED_MPU 关闭
+	LED_OLED=1; //PD11 LED_OLED 关闭
+	LED_U3=1;   //PD12 LED_U3 关闭
+	LED_U1=1;   //PD13 LED_U1 关闭
+	LED_MW=1;   //PD14 LED_MW 关闭
+	LED_CAN=1;  //PD15 LED_CAN 关闭
+	LED_U2=1;   //PC4  LED_U2 关闭
+	LED_MA=1;   //PC5  LED_MA 关闭
+
+	//--- 电机方向控制端口初始化 ---
+	RCC->AHB1ENR|=1<<1;//使能PORTB时钟 
+	//RCC->AHB1ENR|=1<<2;//使能PORTC时钟 
+	//RCC->AHB1ENR|=1<<3;//使能PORTD时钟 
+	//RCC->AHB1ENR|=1<<4;//使能PORTE时钟 
+	GPIO_Set(GPIOB,PIN8|PIN9,GPIO_MODE_OUT,GPIO_OTYPE_PP,GPIO_SPEED_100M,GPIO_PUPD_PU); //PB8,PB9设置
+	GPIO_Set(GPIOC,PIN10|PIN11|PIN12,GPIO_MODE_OUT,GPIO_OTYPE_PP,GPIO_SPEED_100M,GPIO_PUPD_PU); //PC10,PC11,PC12设置
+	GPIO_Set(GPIOD,PIN0,GPIO_MODE_OUT,GPIO_OTYPE_PP,GPIO_SPEED_100M,GPIO_PUPD_PU); //PD0设置
+	GPIO_Set(GPIOE,PIN0|PIN1,GPIO_MODE_OUT,GPIO_OTYPE_PP,GPIO_SPEED_100M,GPIO_PUPD_PU); //PE0,PE1设置
+
+	MA_AIN1=0;
+	MA_AIN2=0;	
+	MB_BIN1=0;
+	MB_BIN2=0;
+	MC_AIN1=0;
+	MC_AIN2=0;
+	MD_BIN1=0;
+	MD_BIN2=0;
+}
+
