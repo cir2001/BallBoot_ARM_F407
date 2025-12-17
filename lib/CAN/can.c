@@ -4,10 +4,7 @@
 #include "usart.h"
 //////////////////////////////////////////////////////////////////////////////////	 
 //
-//
-//
-//
-//							  
+//						  
 ////////////////////////////////////////////////////////////////////////////////// 	   
 //CAN初始化
 //tsjw:重新同步跳跃时间单元.范围:1~3;
@@ -203,22 +200,62 @@ void CAN1_Rx_Msg(u8 fifox,u32 *id,u8 *ide,u8 *rtr,u8 *len,u8 *dat)
 //中断服务函数			    
 void CAN1_RX0_IRQHandler(void)
 {
-	u8 rxbuf[8];
-	u32 id;
-	u8 ide,rtr,len;     
- 	CAN1_Rx_Msg(0,&id,&ide,&rtr,&len,rxbuf);
-    printf("id:%u\r\n",id);
-    printf("ide:%d\r\n",ide);
-    printf("rtr:%d\r\n",rtr);
-    printf("len:%d\r\n",len);
-    printf("rxbuf[0]:%d\r\n",rxbuf[0]);
-    printf("rxbuf[1]:%d\r\n",rxbuf[1]);
-    printf("rxbuf[2]:%d\r\n",rxbuf[2]);
-    printf("rxbuf[3]:%d\r\n",rxbuf[3]);
-    printf("rxbuf[4]:%d\r\n",rxbuf[4]);
-    printf("rxbuf[5]:%d\r\n",rxbuf[5]);
-    printf("rxbuf[6]:%d\r\n",rxbuf[6]);
-    printf("rxbuf[7]:%d\r\n",rxbuf[7]);
+    // 1. 判断 FIFO0 是否真的有数据 (FMP0 位不为0)
+    // RF0R 的低2位表示 FIFO 中的消息数量
+    if ((CAN1->RF0R & CAN_RF0R_FMP0) != 0) 
+    {
+        uint32_t rx_id;
+        int32_t rx_speed;
+        int32_t rx_pos_error;
+
+        // --- 读取数据 ---
+        
+        // 2. 获取标准帧 ID
+        // RIR 寄存器的 [31:21] 位是标准 ID (STID)
+        // [2] 是 IDE (扩展帧标志), [1] 是 RTR (远程帧标志)
+        // 我们只看标准 ID，所以右移 21 位
+        rx_id = (CAN1->sFIFOMailBox[0].RIR >> 21) & 0x7FF;
+
+        // 2. 检查是否为标准数据帧 (可选)
+        if (((CAN1->sFIFOMailBox[0].RIR & CAN_RI0R_RTR) == 0) && 
+            ((CAN1->sFIFOMailBox[0].RIR & CAN_RI0R_IDE) == 0))
+        {
+            // 3. 读取数据
+            rx_speed     = (int32_t)(CAN1->sFIFOMailBox[0].RDLR);
+            rx_pos_error = (int32_t)(CAN1->sFIFOMailBox[0].RDHR);
+
+            // 5. 根据 ID 存入数组
+            switch (rx_id)
+            {
+                case CAN_ID_RX_M1: // 收到 0x101 -> 存入 Motor[0]
+                Motors[0].speed = rx_speed;
+                Motors[0].pos_err = rx_pos_error;
+                Motors[0].update_flag = 1;
+                break;
+            
+				case CAN_ID_RX_M2: // 收到 0x102 -> 存入 Motor[1]
+					Motors[1].speed = rx_speed;
+					Motors[1].pos_err = rx_pos_error;
+					Motors[1].update_flag = 1;
+					break;
+				
+				case CAN_ID_RX_M3: // 收到 0x103 -> 存入 Motor[2]
+					Motors[2].speed = rx_speed;
+					Motors[2].pos_err = rx_pos_error;
+					Motors[2].update_flag = 1;
+					break;
+				
+				default:
+					break;
+            }
+        }
+
+        // --- 释放邮箱 (至关重要) ---
+        
+        // 6. 释放 FIFO0 输出邮箱 (RFOM0 置 1)
+        // 如果不执行这步，FIFO 满了之后就再也收不到新数据了
+        CAN1->RF0R |= CAN_RF0R_RFOM0; 
+    }
 }
 #endif
 
@@ -249,4 +286,58 @@ u8 CAN1_Receive_Msg(u8 *buf)
     if(id!=0x12||ide!=0||rtr!=0)len=0;		//接收错误	   
 	return len;	
 }
+//--------------------------------------------------------------------------
+// 功能: 向指定ID的电机发送数据
+// 参数: 
+//   motor_id: 目标电机的CAN ID
+//   real_speed: 速度数据
+//   pos_error: 位置偏差
+// 返回值: 0=发送失败(邮箱全满), 1=发送成功(已放入邮箱)
+//--------------------------------------------------------------------------
+uint8_t CAN_Send_To_Motor(uint32_t motor_id, int32_t real_speed, int32_t pos_error)
+{
+    uint8_t mbox_idx = 0xFF; // 用于记录找到的空闲邮箱索引
+
+    // 1. 查找空闲邮箱
+    // 检查邮箱0
+    if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) 
+    {
+        mbox_idx = 0;
+    }
+    // 如果邮箱0忙，检查邮箱1
+    else if ((CAN1->TSR & CAN_TSR_TME1) == CAN_TSR_TME1) 
+    {
+        mbox_idx = 1;
+    }
+    // 如果邮箱0和1都忙，检查邮箱2
+    else if ((CAN1->TSR & CAN_TSR_TME2) == CAN_TSR_TME2) 
+    {
+        mbox_idx = 2;
+    }
+    else 
+    {
+        // 3个邮箱都忙，丢包返回失败，或者可以在这里加 while 等待
+        return 0; 
+    }
+
+    // 2. 填充数据到找到的邮箱 (sTxMailBox[mbox_idx])
+    
+    // 清除旧的 TXRQ 标志并设置 ID (标准帧)
+    CAN1->sTxMailBox[mbox_idx].TIR = (motor_id << 21); 
+
+    // 设置数据长度 DLC = 8
+    CAN1->sTxMailBox[mbox_idx].TDTR = 8; 
+
+    // 填充低4字节 (real_speed)
+    CAN1->sTxMailBox[mbox_idx].TDLR = (uint32_t)real_speed;
+    
+    // 填充高4字节 (pos_error)
+    CAN1->sTxMailBox[mbox_idx].TDHR = (uint32_t)pos_error;
+
+    // 3. 触发发送请求
+    CAN1->sTxMailBox[mbox_idx].TIR |= CAN_TI0R_TXRQ; 
+
+    return 1; // 成功放入发送队列
+}
+
 

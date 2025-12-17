@@ -2,10 +2,8 @@
 #include "led.h"
 #include "usart.h" 
 #include "mpu6500_driver.h"
+#include "can.h"
 //////////////////////////////////////////////////////////////////////////////////	 
-//
-//
-//
 //
 //********************************************************************************
 //
@@ -28,21 +26,25 @@ void TIM2_IRQHandler(void)
 { 		    		  			    
 	if(TIM2->SR&0X0001)//溢出中断
 	{
-		TIM1->CCR1 = 1500;	//Motor A PWM Out	
-		TIM1->CCR2 = 10500;	//Motor A PWM Out	
-		TIM1->CCR3 = 8500;	//Motor A PWM Out
-		TIM1->CCR4 = 4500;	//Motor A PWM Out
-		cnt = TIM3->CNT;
-		iMotorA_Encoder = cnt;
-		iMotorAPulseTotle += iMotorA_Encoder;
-		if(iMotorAPulseTotle>=2000)
-		{
-			TIM1->CCR1 = 0;	//Motor A PWM Out
-		}
-		TIM3->CNT = 0;	
-		//iData2ASCII(iMotorAPulseTotle);		    				   				     	    	
-	}				   
-	TIM2->SR&=~(1<<0);//清除中断标志位 	    
+		// 假设这是计算出来的控制量
+        int32_t cmd_speed_m1 = 1000;
+        int32_t cmd_err_m1   = 0;
+
+        // ---------------------------------------------------------
+        // 发送给电机：使用 TX ID (0x2xx, 0x3xx, 0x4xx)
+        // ---------------------------------------------------------
+        
+        // 发给电机1 (ID: 0x201)
+        CAN_Send_To_Motor(CAN_ID_TX_M1, cmd_speed_m1, cmd_err_m1);
+        
+        // 发给电机2 (ID: 0x301)
+        CAN_Send_To_Motor(CAN_ID_TX_M2, 1200, 0);
+        
+        // 发给电机3 (ID: 0x401)
+        CAN_Send_To_Motor(CAN_ID_TX_M3, 800, 0);	
+
+		TIM2->SR&=~(1<<0);//清除中断标志位 	 	   				     	    	
+	}				      
 }
 //定时器3中断服务程序	 
 void TIM3_IRQHandler(void)
@@ -68,6 +70,27 @@ void TIM3_IRQHandler(void)
 	}				   
 	TIM3->SR&=~(1<<0);//清除中断标志位 	    
 }
+//==============================================
+//高级定时器TIM1初始化设置
+//这里时钟选择为APB2 = 84MHz  APB2分频 = 2 
+//TIM1时钟翻倍，fTIM1 = 168MHz
+//fPWM = fTIM/(PSC+1)(ARR+1)
+//arr：自动重装值。
+//psc：时钟预分频数
+//==============================================
+void TIM1_Int_Init(u16 arr,u16 psc)
+{
+	RCC->APB2ENR |= 1 << 0;			//使能TIM1时钟
+
+	TIM1->ARR=arr;          //设定计数器自动重装值
+    TIM1->PSC=psc;          //预分频器
+    TIM1->DIER|=1<<0;       //允许更新中断
+    TIM1->CR1|=0x01;        //使能定时器1
+    
+    //STM32F407中，TIM1的更新中断与TIM10共享中断向量
+    MY_NVIC_Init(1,2,TIM1_UP_TIM10_IRQn,2); //抢占1，子优先级2，组2
+}
+//==============================================
 //通用定时器2中断初始化
 //这里时钟选择为APB1的2倍，而APB1为42M
 //arr：自动重装值。
@@ -97,26 +120,6 @@ void TIM3_Int_Init(u16 arr,u16 psc)
 	TIM3->DIER|=1<<0;   //允许更新中断	  
 	TIM3->CR1|=0x01;    //使能定时器2
   	MY_NVIC_Init(1,3,TIM3_IRQn,2);	//抢占1，子优先级3，组2									 
-}
-//==============================================
-//高级定时器TIM1初始化设置
-//这里时钟选择为APB2 = 84MHz  APB2分频 = 2 
-//TIM1时钟翻倍，fTIM1 = 168MHz
-//fPWM = fTIM/(PSC+1)(ARR+1)
-//arr：自动重装值。
-//psc：时钟预分频数
-//==============================================
-void TIM1_Int_Init(u16 arr,u16 psc)
-{
-	RCC->APB2ENR |= 1 << 0;			//使能TIM1时钟
-
-	TIM1->ARR=arr;          //设定计数器自动重装值
-    TIM1->PSC=psc;          //预分频器
-    TIM1->DIER|=1<<0;       //允许更新中断
-    TIM1->CR1|=0x01;        //使能定时器1
-    
-    //STM32F407中，TIM1的更新中断与TIM10共享中断向量
-    MY_NVIC_Init(1,2,TIM1_UP_TIM10_IRQn,2); //抢占1，子优先级2，组2
 }
 //==============================================
 //高级定时器TIM8初始化设置 PWM输出模式

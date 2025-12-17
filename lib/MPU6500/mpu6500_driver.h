@@ -1,9 +1,8 @@
 #ifndef __MPU6500_DRIVER_H
 #define __MPU6500_DRIVER_H
+
 #include "stm32f4xx.h"
- 
-#include "sys.h"
-   												  	  
+#include "sys.h"						  	  
 #include "mpuiic.h"
  
 //MPU6050 AD0¿ØÖÆ½Å

@@ -2,13 +2,7 @@
  
 /**
 *此文件包含计算MPU6XXX方向矩阵的数学计算函数
-*
-*
-*
-*
 **/
- 
- 
 unsigned short inv_row_2_scale(const signed char *row)
 {
     unsigned short b;

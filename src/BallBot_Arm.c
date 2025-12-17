@@ -24,6 +24,7 @@
 //		date		comment
 //	2025-12-02   	初始化
 //  2025-12-17      PlatformIO 移植
+//  2025-12-17      F407 F103 联机测试
 //*****************************************************************
 //==== 引脚连接表 ============
 //---- MPU6500 ----------
@@ -123,15 +124,11 @@
 #include "dma_driver.h"
 #include "mahony.h"
 
-#include "stm32f4xx.h"
-#include "system_stm32f4xx.h"
 #include "FreeRTOS.h"
 #include "task.h"   
 #include "queue.h"
 //**************************************************
-//
-//
-//
+// 定义变量和函数声明
 //**************************************************
 u16 ascii_to_hex_id(unsigned char *ascii);
 u8 ascii_to_hex_data(unsigned char *ascii);
@@ -180,58 +177,39 @@ int main(void)
 	LED_Init();
 
 	MPU6500_Init();				//先mpu6500的初始化工作，再进行timer的初始化	
-	delay_ms(200);				//防止开启timer中断影响dmp算法的初始化
+	delay_ms(1);				//防止开启timer中断影响dmp算法的初始化
 	//while(MPU6500_DMP_Init())	//mpu6500 DMP算法初始化 设置DMP采样速率200Hz (1/200)=5ms输出
 	//	{delay_ms(200);}
 	//delay_ms(100);
    
     AHRS_Init();              //初始化 Mahony 算法
-    delay_ms(100);
+    delay_ms(1);
 
 	uart_init1(84,115200);		//串口1初始化为115200
 	uart_init2(42,115200);		//串口2初始化为115200
 //	uart_init3(42,115200);		//串口3初始化为115200
-	delay_us(20);
+	delay_us(10);
     
     DMA_Config_USART2();        // 初始化 DMA 用于 USART2
-
 
 	// 初始化 TIM1，设定为 200ms 中断一次
 	// 参数1 (ARR): 1999  -> 计数 2000 次
 	// 参数2 (PSC): 16799 -> 预分频 16800 (时钟变为 10kHz, 0.1ms)
-	TIM1_Int_Init(1999, 16799);
-//	TIM2_Int_Init(500-1,840-1);
+	//TIM1_Int_Init(1999, 16799);
+	TIM2_Int_Init(500-1,840-1); //5ms
 //	TIM3_Int_Init(500-1,840-1);//10Khz的计数频率，计数5K次为500ms 
 
 	SPI2_Init();				//初始化SPI2接口 0.96OLED初始化
-	delay_us(20);
+	delay_us(10);
 	OLED_Init();
-	delay_us(20);
-//	TIM1_CH1_PWM_Init(8399,0);	//PWM输出频率，20kHz
-//	TIM1_CH1_PWM_Init(16799,0);	//PWM输出频率，10kHz
-//	TIM8_PWM_Init(16799,0);	//PWM输出频率，10kHz
-	delay_us(20);
-
-
-	delay_us(20);
-
-	TIM2_Encoder_Init();
-//	TIM3_Encoder_Init();
-	delay_us(20);
+	delay_us(10);
 
 	CAN1_Mode_Init();			//CAN初始化,波特率500Kbps   
 
-//	LCD_Init();
-	delay_us(20);
-//	LCD_Clear(BLACK); 		 	//清屏
-    KEY_Init();
-	EXTIX_Init();
+	delay_us(10);
 
-	TIM8->CCR1 = 0;	//Motor A PWM Out
-	TIM8->CCR2 = 0;	//Motor A PWM Out
-	TIM8->CCR3 = 0;	//Motor A PWM Out
-	TIM8->CCR4 = 0;	//Motor A PWM Out
-	
+    KEY_Init();
+	EXTIX_Init();	
 	// 创建两个LED任务  FreeREOS部分
 //------------------ FreeRTOS 任务创建 -------------------
 	//xTaskCreate(Task1, "LED1_Task", 128, NULL, 1, NULL); 
@@ -242,12 +220,11 @@ int main(void)
 	OLED_Clear();
     OLED_ShowString(0, 0, (u8*)"System Init OK", 16);
     OLED_Refresh_Gram(); // 第一次刷新，显示初始化完成
-    delay_ms(1000);      // 停顿1秒让你看到提示
+    //delay_ms(1000);      // 停顿1秒让你看到提示
 	//OLED_Clear(); 
 //******** 主循环程序 ***********//
 	while(1)
 	{
-		//delay_ms(100);
 		u16counter++;
 		if(u16counter>=10)
 		{
@@ -256,7 +233,6 @@ int main(void)
 			//LED1 = !LED1;
 			//OLED_ShowString(0,0,"LY:",16); 
 		}
-
         if(mpu_int_flag)
 		{
             mpu_int_count++;
