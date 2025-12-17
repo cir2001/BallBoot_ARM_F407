@@ -1,89 +1,84 @@
-//
-// !!! WARNING !!! AUTO-GENERATED FILE!
-// PLEASE DO NOT MODIFY IT AND USE "platformio.ini":
-// https://docs.platformio.org/page/projectconf/section_env_build.html#build-flags
-//
 {
-    "configurations": [
-        {
-            "name": "PlatformIO",
-            "includePath": [
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/TIMER",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/OLED",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/SPI",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/MPU6500",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/AHRS",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/FreeRTOS",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/EXTI",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/KEY",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/DMA",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/CAN",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/usart",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/LED",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/include",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/src",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/sys",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/delay",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/FreeRTOS/include",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/FreeRTOS/portable/GCC/ARM_CM4F",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/MPU6500/eMPL",
-                "C:/Users/Administrator/.platformio/packages/framework-cmsis/CMSIS/Include",
-                "C:/Users/Administrator/.platformio/packages/framework-cmsis-stm32f4/Include",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/ADC",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/BALANCE",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/LCD",
-                "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/WDG",
-                ""
-            ],
-            "browse": {
-                "limitSymbolsToIncludedHeaders": true,
-                "path": [
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/TIMER",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/OLED",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/SPI",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/MPU6500",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/AHRS",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/FreeRTOS",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/EXTI",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/KEY",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/DMA",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/CAN",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/usart",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/LED",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/include",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/src",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/sys",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/delay",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/FreeRTOS/include",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/FreeRTOS/portable/GCC/ARM_CM4F",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/MPU6500/eMPL",
-                    "C:/Users/Administrator/.platformio/packages/framework-cmsis/CMSIS/Include",
-                    "C:/Users/Administrator/.platformio/packages/framework-cmsis-stm32f4/Include",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/ADC",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/BALANCE",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/LCD",
-                    "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/WDG",
-                    ""
-                ]
-            },
-            "defines": [
-                "PLATFORMIO=60118",
-                "STM32F407xx",
-                "STM32F4",
-                "STM32F407xx",
-                "USE_STDPERIPH_DRIVER",
-                "F_CPU=168000000L",
-                ""
-            ],
-            "compilerPath": "C:/Users/Administrator/.platformio/packages/toolchain-gccarmnoneeabi/bin/arm-none-eabi-gcc.exe",
-            "compilerArgs": [
-                "-mfloat-abi=hard",
-                "-mfpu=fpv4-sp-d16",
-                "-mthumb",
-                "-mcpu=cortex-m4",
-                ""
-            ]
-        }
-    ],
-    "version": 4
+  "configurations": [
+    {
+      "name": "windows-gcc-arm64",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/include",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/src",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/TIMER",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/OLED",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/SPI",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/MPU6500",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/AHRS",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/EXTI",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/KEY",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/DMA",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/CAN",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/usart",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/LED",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/delay",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/sys",
+        "C:/Users/Administrator/.platformio/packages/framework-cmsis/CMSIS/Include",
+        "C:/Users/Administrator/.platformio/packages/framework-cmsis-stm32f4/Include",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/ADC",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/BALANCE",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/LCD",
+        "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/WDG",
+        ""
+      ],
+      "browse": {
+        "limitSymbolsToIncludedHeaders": true,
+        "path": [
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/TIMER",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/OLED",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/SPI",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/MPU6500",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/AHRS",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/FreeRTOS",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/EXTI",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/KEY",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/DMA",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/CAN",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/usart",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/LED",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/include",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/src",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/sys",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/delay",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/FreeRTOS/include",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/FreeRTOS/portable/GCC/ARM_CM4F",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/MPU6500/eMPL",
+          "C:/Users/Administrator/.platformio/packages/framework-cmsis/CMSIS/Include",
+          "C:/Users/Administrator/.platformio/packages/framework-cmsis-stm32f4/Include",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/ADC",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/BALANCE",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/LCD",
+          "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/lib/WDG",
+          ""
+        ]
+      },
+      "defines": [
+        "PLATFORMIO=60118",
+        "STM32F407xx",
+        "STM32F4",
+        "STM32F407xx",
+        "USE_STDPERIPH_DRIVER",
+        "F_CPU=168000000L",
+        ""
+      ],
+      "compilerPath": "C:/Users/Administrator/.platformio/packages/toolchain-gccarmnoneeabi/bin/arm-none-eabi-gcc.exe",
+      "compilerArgs": [
+        "-mfloat-abi=hard",
+        "-mfpu=fpv4-sp-d16",
+        "-mthumb",
+        "-mcpu=cortex-m4",
+        ""
+      ],
+      "cStandard": "${default}",
+      "cppStandard": "${default}",
+      "intelliSenseMode": "windows-gcc-arm64"
+    }
+  ],
+  "version": 4
 }
