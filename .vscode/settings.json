@@ -1,7 +1,7 @@
 {
-  "C_Cpp_Runner.cCompilerPath": "gcc",
-  "C_Cpp_Runner.cppCompilerPath": "g++",
-  "C_Cpp_Runner.debuggerPath": "gdb",
+  "C_Cpp_Runner.cCompilerPath": "C:/Users/Administrator/.platformio/packages/toolchain-gccarmnoneeabi/bin/arm-none-eabi-gcc.exe",
+  "C_Cpp_Runner.cppCompilerPath": "C:/Users/Administrator/.platformio/packages/toolchain-g++armnoneeabi/bin/arm-none-eabi-gcc.exe",
+  "C_Cpp_Runner.debuggerPath": "C:/Users/Administrator/.platformio/packages/toolchain-gdbarmnoneeabi/bin/arm-none-eabi-gcc.exe",
   "C_Cpp_Runner.cStandard": "",
   "C_Cpp_Runner.cppStandard": "",
   "C_Cpp_Runner.msvcBatchPath": "C:/Program Files/Microsoft Visual Studio/VR_NR/Community/VC/Auxiliary/Build/vcvarsall.bat",
@@ -38,15 +38,28 @@
   "C_Cpp_Runner.compilerArgs": [],
   "C_Cpp_Runner.linkerArgs": [],
   "C_Cpp_Runner.includePaths": [
-    "c:\\Users\\Administrator\\Desktop\\BallBot_ARM_F407_Test\\SYSTEM\\delay",
-    "c:\\Users\\Administrator\\Desktop\\BallBot_ARM_F407_Test\\SYSTEM\\sys",
-    "c:\\Users\\Administrator\\Desktop\\BallBot_ARM_F407_Test\\SYSTEM\\usart",
-    "c:\\Users\\Administrator\\Desktop\\BallBot_ARM_F407_Test\\HARDWARE\\LED",
-    "c:\\Users\\Administrator\\Desktop\\BallBot_ARM_F407_Test\\HARDWARE\\KEY",
-    "c:\\Users\\Administrator\\Desktop\\BallBot_ARM_F407_Test\\HARDWARE\\SPI",
-    "C:\\Keil_v5\\ARM\\ARMCC\\include",
-    "C:\\Keil_v5\\ARM\\ARMCC\\include\\rw",
-    "c:\\Users\\Administrator\\Desktop\\BallBot_ARM_F407_Test\\USER"
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/include",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/src",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/TIMER",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/OLED",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/SPI",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/MPU6500",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/AHRS",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/EXTI",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/KEY",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/DMA",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/CAN",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/usart",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/LED",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/delay",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/sys",
+    "C:/Users/Administrator/.platformio/packages/framework-cmsis/CMSIS/Include",
+    "C:/Users/Administrator/.platformio/packages/framework-cmsis-stm32f4/Include",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/ADC",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/BALANCE",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/LCD",
+    "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/lib/WDG",
+    ""
   ],
   "C_Cpp_Runner.includeSearch": [
     "*",
@@ -65,6 +78,5 @@
   "C_Cpp_Runner.useLeakSanitizer": false,
   "C_Cpp_Runner.showCompilationTime": false,
   "C_Cpp_Runner.useLinkTimeOptimization": false,
-  "C_Cpp_Runner.msvcSecureNoWarnings": false,
-  "cmake.sourceDirectory": "C:/Users/Administrator/Desktop/BallBot_ARM_F407/FreeRTOS/include"
+  "C_Cpp_Runner.msvcSecureNoWarnings": false
 }
