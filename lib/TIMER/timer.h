@@ -25,4 +25,6 @@ void TIM3_Encoder_Init(void);
 void TIM4_Encoder_Init(void);
 void TIM5_Encoder_Init(void);
 
+uint32_t Get_System_Tick(void);
+
 #endif

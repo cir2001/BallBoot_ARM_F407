@@ -15,8 +15,8 @@
             "args": [],
             "stopAtEntry": false,
             "externalConsole": true,
-            "cwd": "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/src",
-            "program": "c:/Users/Administrator/Documents/PlatformIO/Projects/BallBot_F407/src/build/Debug/outDebug",
+            "cwd": "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/src",
+            "program": "c:/Users/Administrator/Desktop/BallBoot_ARM_F407/src/build/Debug/outDebug",
             "MIMode": "gdb",
             "miDebuggerPath": "C:/Users/Administrator/.platformio/packages/toolchain-gdbarmnoneeabi/bin/arm-none-eabi-gcc.exe",
             "setupCommands": [

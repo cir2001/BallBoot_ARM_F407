@@ -1,5 +1,6 @@
 #include "sys.h"
-#include "usart.h"	
+#include "usart.h"
+#include "led.h"	
 #include <stdio.h>  
 ////////////////////////////////////////////////////////////////////////////////// 	 
 //如果使用ucos,则包括下面的头文件即可.
@@ -7,16 +8,7 @@
 #include "includes.h"					//ucos 使用	  
 #endif
 //////////////////////////////////////////////////////////////////////////////////	   
-//本程序只供学习使用，未经作者许可，不得用于其它任何用途
-//ALIENTEK STM32F407开发板
-//串口1初始化 
-//正点原子@ALIENTEK
-//技术论坛:www.openedv.com
-//修改日期:2014/5/2
-//版本：V1.0
-//版权所有，盗版必究。
-//Copyright(C) 广州市星翼电子科技有限公司 2014-2024
-//All rights reserved
+//
 //********************************************************************************
 //修改说明
 //无
@@ -39,6 +31,11 @@ u8	UART1_RX_Flag;
 
 u8  u8test1,u8test2,u8test3,u8test4,u8test5,u8test6,u8test7,u8test8;
 
+u8  u8Uart2_flag,u8Uart2_flag_test;
+
+int32_t recv_uart2_M1_val,recv_uart2_M2_val,recv_uart2_M3_val;
+
+int32_t temp_val;
 //=========================================================
 //		 USART1 中断服务程序		  
 //=========================================================
@@ -129,8 +126,64 @@ void USART2_IRQHandler(void)
 							UART2ComReply();		// 指令回报
 							break;
 			//==== S ==== 
-					case 'S':		// 
-					
+					case 'S':		// 指令格式: #S+20000,-20000,+20000.
+							LED_U2 = !LED_U2;
+							u8Uart2_flag = 1;
+							u8Uart2_flag_test= 1;
+							//--- M1 ----------------------
+							temp_val =  (USART2_RX_BUF[3] - '0') * 10000 +
+										(USART2_RX_BUF[4] - '0') * 1000 +
+										(USART2_RX_BUF[5] - '0') * 100 +
+										(USART2_RX_BUF[6] - '0') * 10 +
+										(USART2_RX_BUF[7] - '0');
+							if(USART2_RX_BUF[2] == '-')
+							{
+								recv_uart2_M1_val = -temp_val;
+							}
+							else
+							{
+								recv_uart2_M1_val = temp_val;
+							}	
+
+							// 限制最大速度 (防止瞎发指令导致堵转)
+                			if(recv_uart2_M1_val > 25000) recv_uart2_M1_val = 25000;
+               				if(recv_uart2_M1_val < -25000) recv_uart2_M1_val = -25000;
+							//--- M2 ----------------------
+							temp_val =  (USART2_RX_BUF[10] - '0') * 10000 +
+										(USART2_RX_BUF[11] - '0') * 1000 +
+										(USART2_RX_BUF[12] - '0') * 100 +
+										(USART2_RX_BUF[13] - '0') * 10 +
+										(USART2_RX_BUF[14] - '0');
+							if(USART2_RX_BUF[9] == '-')
+							{
+								recv_uart2_M2_val = -temp_val;
+							}
+							else
+							{
+								recv_uart2_M2_val = temp_val;
+							}	
+
+							// 限制最大速度 (防止瞎发指令导致堵转)
+                			if(recv_uart2_M2_val > 25000) recv_uart2_M2_val = 25000;
+               				if(recv_uart2_M2_val < -25000) recv_uart2_M2_val = -25000;
+							//--- M3 ----------------------
+							temp_val =  (USART2_RX_BUF[17] - '0') * 10000 +
+										(USART2_RX_BUF[18] - '0') * 1000 +
+										(USART2_RX_BUF[19] - '0') * 100 +
+										(USART2_RX_BUF[20] - '0') * 10 +
+										(USART2_RX_BUF[21] - '0');
+							if(USART2_RX_BUF[16] == '-')
+							{
+								recv_uart2_M3_val = -temp_val;
+							}
+							else
+							{
+								recv_uart2_M3_val = temp_val;
+							}	
+
+							// 限制最大速度 (防止瞎发指令导致堵转)
+                			if(recv_uart2_M3_val > 25000) recv_uart2_M3_val = 25000;
+               				if(recv_uart2_M3_val < -25000) recv_uart2_M3_val = -25000;
 							break;
 			//==== K ===== 
 					case 'K':		//
@@ -323,7 +376,7 @@ void uart_init1(u32 pclk2, u32 bound)
 //pclk1:PCLK1时钟频率(42Mhz)
 //bound:波特率 
 /*************************************************************** */
-void uart_init2(u32 pclk1, u32 bound)
+/*void uart_init2(u32 pclk1, u32 bound)
 {   
     float temp;
     u16 mantissa;
@@ -363,13 +416,13 @@ void uart_init2(u32 pclk1, u32 bound)
 
     // 使能串口 (UE) 和 发送 (TE)
     USART2->CR1 |= (1 << 13) | (1 << 3); 
-}
+}*/
 /*************************************************************** */
 //初始化IO 串口2
 //pclk1:PCLK1时钟频率(42Mhz)
 //bound:波特率 
 /*************************************************************** */
-/*void uart_init2(u32 pclk1,u32 bound)
+void uart_init2(u32 pclk1,u32 bound)
 {  	 
 	float temp;
 	u16 mantissa;
@@ -396,7 +449,7 @@ void uart_init2(u32 pclk1, u32 bound)
 	MY_NVIC_Init(3,1,USART2_IRQn,2);//组2，最低优先级 
 #endif
 	USART2->CR1|=1<<13;  	//串口使能
-}*/
+}
 //初始化IO 串口3
 //pclk1:PCLK1时钟频率(42Mhz)
 //bound:波特率 

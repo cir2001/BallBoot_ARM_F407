@@ -21,18 +21,15 @@
 #define CAN_ID_RX_M2   0x102  // 来自电机2的反馈
 #define CAN_ID_RX_M3   0x103  // 来自电机3的反馈
 
-// 定义数据结构
+// 定义电机状态结构体
 typedef struct {
-    int32_t speed;      // 实际速度
-    int32_t pos_err;    // 位置误差
-    uint8_t update_flag;// 收到数据标志
+    int32_t AS5600_val;       // 当前角度
+    uint8_t status;      // 健康状态
+    uint32_t last_tick;  // 用于主机端心跳检测
 } Motor_Feedback_t;
 
 // 全局数组，存储3个电机状态
-volatile Motor_Feedback_t Motors[3];
-	
-//CAN1接收RX0中断使能
-#define CAN1_RX0_INT_ENABLE			1		 			//0,不使能;1,使能.								    
+volatile Motor_Feedback_t Motors[3];							    
 										 							 				    
 u8 CAN1_Mode_Init(void);//CAN初始化
 u8 CAN1_Tx_Msg(u32 id,u8 ide,u8 rtr,u8 len,u8 *dat);	//发送数据

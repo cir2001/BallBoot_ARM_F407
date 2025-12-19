@@ -24,7 +24,7 @@
 //		date		comment
 //	2025-12-02   	初始化
 //  2025-12-17      PlatformIO 移植
-//  2025-12-17      F407 F103 联机测试
+//  2025-12-17      F407 F103 联机测试 串口2接收指令，下发3个F103，指令格式: #S+20000,-20000,+20000.
 //*****************************************************************
 //==== 引脚连接表 ============
 //---- MPU6500 ----------
@@ -128,13 +128,15 @@
 #include "task.h"   
 #include "queue.h"
 //**************************************************
-// 定义变量和函数声明
+// 函数声明
 //**************************************************
 u16 ascii_to_hex_id(unsigned char *ascii);
 u8 ascii_to_hex_data(unsigned char *ascii);
-void ReadEncoder(void);
 void Task1(void *pvParameters);
 void Task2(void *pvParameters);
+void OLED_Refresh(void);
+//-----------------------------------------------
+// 外部变量声明
 //-----------------------------------------------
 extern	u8  USART1_RX_BUF[USART_TRANS_LEN];     //接收缓冲,最大128个字节.
 extern	u8  USART1_TX_BUF[USART_TRANS_LEN];     //发送缓冲,最大128个字节.
@@ -144,22 +146,26 @@ extern	u8  USART3_RX_BUF[USART_TRANS_LEN];     //接收缓冲,最大128个字节
 extern	u8  USART3_TX_BUF[USART_TRANS_LEN];     //发送缓冲,最大128个字节.
 extern  u8  mpu_int_flag,UART1_RX_Flag;
 
+extern int32_t recv_uart2_M1_val,recv_uart2_M2_val,recv_uart2_M3_val;
+
+extern u8 u8Uart2_flag;
+extern int32_t Target_Speed_M1,Target_Speed_M2,Target_Speed_M3;   // 设定的目标速度
+//-----------------------------------------------
+// 变量声明
+//-----------------------------------------------
 int16_t gy_X,gy_Y,gy_Z;
 int16_t ac_X,ac_Y,ac_Z;
 
 float fpitch,froll,fyaw;
 
 u8 i,res,res1;
-u8 u8can,u8can1,u8can2;
-u8 CAN_TX_Data[8];
 
 u8 res,u8Led0_Counter;
 u8 mpu_int_count;
 
 u32 u16counter;
 
-u16 CAN_TX_ID_UART;
-
+u16 oled_tick;
 unsigned char a2h_id[3],a2h[8][2];
 
 // 定义一个结构体变量存放角度
@@ -167,31 +173,35 @@ IMU_Angle_t current_angle;
 //int16_t cnt;
 //int16_t iMotorA_Encoder,iMotorB_Encoder,iMotorC_Encoder;
 //long int iMotorAPulseTotle,iMotorBPulseTotle,iMotorCPulseTotle;
-int16_t last_cnt = 0;
 //======= 主程序 Main ==================================
 int main(void)
 { 
-	Stm32_Clock_Init(336,8,2,7);//设置时钟,168Mhz
+    Stm32_Clock_Init(336,8,2,7);//设置时钟,168Mhz
 	delay_init(168);			//初始化延时函数
 
 	LED_Init();
-
-	MPU6500_Init();				//先mpu6500的初始化工作，再进行timer的初始化	
-	delay_ms(1);				//防止开启timer中断影响dmp算法的初始化
-	//while(MPU6500_DMP_Init())	//mpu6500 DMP算法初始化 设置DMP采样速率200Hz (1/200)=5ms输出
-	//	{delay_ms(200);}
-	//delay_ms(100);
-   
-    AHRS_Init();              //初始化 Mahony 算法
-    delay_ms(1);
-
-	uart_init1(84,115200);		//串口1初始化为115200
-	uart_init2(42,115200);		//串口2初始化为115200
-//	uart_init3(42,115200);		//串口3初始化为115200
-	delay_us(10);
+	// --- OLED 最先启动，方便观察 ---
+    SPI2_Init();
+    delay_us(10);
+    OLED_Init();
+    OLED_ShowString(0, 0, "System Booting...", 16);
     
-    DMA_Config_USART2();        // 初始化 DMA 用于 USART2
+    // --- 保持 2 秒 ---
+    delay_ms(2000);
 
+    // --- 初始化所有传感器，但不开启定时器发送 ---
+    MPU6500_Init();
+    AHRS_Init();
+    
+    uart_init1(84,115200);
+    uart_init2(42,115200);
+    uart_init3(42,115200);
+    DMA_Config_USART2();
+
+    // --- 4. 初始化 CAN (确保 ABOM 在初始化模式下开启) ---
+    CAN1_Mode_Init();
+    // 强制再确认一次寄存器
+    CAN1->MCR |= CAN_MCR_ABOM | CAN_MCR_AWUM;
 	// 初始化 TIM1，设定为 200ms 中断一次
 	// 参数1 (ARR): 1999  -> 计数 2000 次
 	// 参数2 (PSC): 16799 -> 预分频 16800 (时钟变为 10kHz, 0.1ms)
@@ -199,17 +209,11 @@ int main(void)
 	TIM2_Int_Init(500-1,840-1); //5ms
 //	TIM3_Int_Init(500-1,840-1);//10Khz的计数频率，计数5K次为500ms 
 
-	SPI2_Init();				//初始化SPI2接口 0.96OLED初始化
-	delay_us(10);
-	OLED_Init();
-	delay_us(10);
-
-	CAN1_Mode_Init();			//CAN初始化,波特率500Kbps   
-
-	delay_us(10);
-
     KEY_Init();
 	EXTIX_Init();	
+
+    OLED_Clear();
+    OLED_ShowString(0, 0, (u8*)"System Online", 16);
 	// 创建两个LED任务  FreeREOS部分
 //------------------ FreeRTOS 任务创建 -------------------
 	//xTaskCreate(Task1, "LED1_Task", 128, NULL, 1, NULL); 
@@ -218,21 +222,43 @@ int main(void)
 	//vTaskStartScheduler();
 //------------------------------------------
 	OLED_Clear();
-    OLED_ShowString(0, 0, (u8*)"System Init OK", 16);
+    OLED_ShowString(0, 0, (u8*)" Tar    AS   sta", 16);
     OLED_Refresh_Gram(); // 第一次刷新，显示初始化完成
     //delay_ms(1000);      // 停顿1秒让你看到提示
 	//OLED_Clear(); 
+//------------------------------------------
+    for(int i=0; i<3; i++)
+    {
+        Motors[i].last_tick = 0; // 初始为 0
+        Motors[i].status = 0x80;  // 初始状态设为错误/离线
+    }
 //******** 主循环程序 ***********//
 	while(1)
 	{
-		u16counter++;
-		if(u16counter>=10)
-		{
-			u16counter = 0;
-            LED_MA = !LED_MA; // PC5
-			//LED1 = !LED1;
-			//OLED_ShowString(0,0,"LY:",16); 
-		}
+        // ============================
+        // 主循环：处理紧急任务
+        // ============================
+		// 1. 检查是否有新指令
+        if (u8Uart2_flag == 1)
+        {
+			// 从串口2接收新指令
+			Target_Speed_M1 = recv_uart2_M1_val;//设定范围：-25000~25000
+            Target_Speed_M2 = recv_uart2_M2_val;
+            Target_Speed_M3 = recv_uart2_M3_val;
+            UART2ComReply();
+            // 清除标志位
+            u8Uart2_flag = 0;
+        }
+        // ============================
+        // 主循环：处理非紧急任务
+        // ============================
+        // 每 100ms 刷新一次屏幕 (1ms * 100 = 100ms)
+        if (oled_tick >= 20)
+        {
+            oled_tick = 0;
+            LED_MA = !LED_MA;
+            OLED_Refresh();
+        }
         if(mpu_int_flag)
 		{
             mpu_int_count++;
@@ -250,35 +276,7 @@ int main(void)
             AHRS_Update(gx, gy, gz, ac_X, ac_Y, ac_Z, 0.001f);
 
             // 5. 获取结果
-            AHRS_GetEulerAngle(&current_angle);
-
-            if(u16counter>=10)
-		    {
-                u16counter = 0;
-                //LED_CAN = !LED_CAN;     
-		    }   
-
-            if(res == 0) 
-            {
-                //LED_U3 = !LED_U3;
-                // --- 第二步：准备 OLED 显存 (GRAM) ---
-                // 1. 清除显存 (清除上一帧的数字，防止重叠)
-                //OLED_Clear(); 
-                
-                // 2. 画静态文字
-                //OLED_ShowString(0, 0,  "LY-STM32", 16);
-                //OLED_ShowString(0, 24, "Count:", 16);
-                
-                // 3. 画动态变量
-                // 参数：x, y, 数字变量, 位数, 字体大小
-                //OLED_ShowNum(56, 24, fpitch, 4, 16); 
-                
-                // --- 第三步：核心！将显存刷到屏幕 ---
-                //OLED_Refresh_Gram(); 
-                
-                // --- 第四步：控制刷新率 ---
-               // delay_ms(100); // 约 20fps，人眼看着舒服，且数字变化能看清
-            }
+            AHRS_GetEulerAngle(&current_angle); 
             
        }
        if(mpu_int_count>=10)
@@ -301,15 +299,10 @@ int main(void)
 
         //UART1ComReply();
         //UART2ComReply();
-         
-		
 	}
 }
 
 //******************************************************
-//
-//
-//
 //
 //*****************************************************
 u16 ascii_to_hex_id(unsigned char *ascii)
@@ -336,9 +329,6 @@ u16 ascii_to_hex_id(unsigned char *ascii)
 }
 //******************************************************
 //
-//
-//
-//
 //*****************************************************
 u8 ascii_to_hex_data(unsigned char *ascii)
 {
@@ -361,6 +351,75 @@ u8 ascii_to_hex_data(unsigned char *ascii)
     }
 
     return value;
+}
+//------------------------------------------------------
+// OLED 刷新
+//------------------------------------------------------
+void OLED_Refresh(void)
+{
+    char buf[20]; 
+    uint32_t current_time = Get_System_Tick();
+    // --- 第一行 (Y=16) ---
+    sprintf(buf, "%6d %5d", Target_Speed_M1, Motors[0].AS5600_val);
+    OLED_ShowString(0, 16, (u8*)buf, 16);
+    // 1. 判断物理层是否掉线 (超时检测)
+    // 如果当前时间比上次收到回包的时间大 100ms
+    if (current_time - Motors[0].last_tick > 20) //100ms timer2 5ms 
+    {
+        OLED_ShowString(104, 16, (u8*)"OFF", 16); 
+    }
+    // 2. 判断协议层是否报错 (F103 发来的心跳保护位)
+    else if (Motors[0].status & 0x80) 
+    {
+        OLED_ShowString(104, 16, (u8*)"ERR", 16); 
+    }
+    // 3. 正常运行
+    else 
+    {
+        OLED_ShowString(104, 16, (u8*)" OK", 16); 
+    }
+
+    // --- 第二行 (Y=32) ---
+    sprintf(buf, "%6d %5d", Target_Speed_M2, Motors[1].AS5600_val);
+    OLED_ShowString(0, 32, (u8*)buf, 16);
+    // 1. 判断物理层是否掉线 (超时检测)
+    // 如果当前时间比上次收到回包的时间大 100ms
+    if (current_time - Motors[1].last_tick > 20) //100ms timer2 5ms 
+    {
+        OLED_ShowString(104, 32, (u8*)"OFF", 16); 
+    }
+    // 2. 判断协议层是否报错 (F103 发来的心跳保护位)
+    else if (Motors[1].status & 0x80) 
+    {
+        OLED_ShowString(104, 32, (u8*)"ERR", 16); 
+    }
+    // 3. 正常运行
+    else 
+    {
+        OLED_ShowString(104, 32, (u8*)" OK", 16); 
+    }
+
+    // --- 第三行 (Y=48) ---
+    sprintf(buf, "%6d %5d", Target_Speed_M3, Motors[2].AS5600_val);
+    OLED_ShowString(0, 48, (u8*)buf, 16);
+    // 1. 判断物理层是否掉线 (超时检测)
+    // 如果当前时间比上次收到回包的时间大 100ms
+    if (current_time - Motors[2].last_tick > 20) //100ms timer2 5ms 
+    {
+        OLED_ShowString(104, 48, (u8*)"OFF", 16); 
+    }
+    // 2. 判断协议层是否报错 (F103 发来的心跳保护位)
+    else if (Motors[2].status & 0x80) 
+    {
+        OLED_ShowString(104, 48, (u8*)"ERR", 16); 
+    }
+    // 3. 正常运行
+    else 
+    {
+        OLED_ShowString(104, 48, (u8*)" OK", 16); 
+    }
+
+    OLED_Refresh_Gram();
 }
 
 void vApplicationIdleHook(void)
