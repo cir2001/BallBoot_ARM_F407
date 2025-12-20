@@ -123,6 +123,7 @@
 #include "key.h"
 #include "dma_driver.h"
 #include "mahony.h"
+#include "esp01s.h"
 
 #include "FreeRTOS.h"
 #include "task.h"   
@@ -130,8 +131,6 @@
 //**************************************************
 // 函数声明
 //**************************************************
-u16 ascii_to_hex_id(unsigned char *ascii);
-u8 ascii_to_hex_data(unsigned char *ascii);
 void Task1(void *pvParameters);
 void Task2(void *pvParameters);
 void OLED_Refresh(void);
@@ -179,29 +178,38 @@ int main(void)
     Stm32_Clock_Init(336,8,2,7);//设置时钟,168Mhz
 	delay_init(168);			//初始化延时函数
 
+    KEY_Init();
 	LED_Init();
+
 	// --- OLED 最先启动，方便观察 ---
     SPI2_Init();
     delay_us(10);
     OLED_Init();
+    OLED_Clear();
     OLED_ShowString(0, 0, "System Booting...", 16);
-    
-    // --- 保持 2 秒 ---
-    delay_ms(2000);
+    OLED_Refresh_Gram(); // 第一次刷新
+    delay_ms(2000); // 保持 2 秒
 
-    // --- 初始化所有传感器，但不开启定时器发送 ---
+	EXTIX_Init();
+    // --- 初始化传感器，但不开启定时器发送 ---
     MPU6500_Init();
+    delay_ms(10); // 等待 MPU6500 准备好
+    // --- 初始化 AHRS 算法 ---
     AHRS_Init();
-    
+
+    // --- 初始化串口 ---
     uart_init1(84,115200);
     uart_init2(42,115200);
     uart_init3(42,115200);
-    DMA_Config_USART2();
+    delay_ms(10); // 等待串口初始化完成
 
-    // --- 4. 初始化 CAN (确保 ABOM 在初始化模式下开启) ---
+    //--- 初始化 CAN ---
     CAN1_Mode_Init();
-    // 强制再确认一次寄存器
-    CAN1->MCR |= CAN_MCR_ABOM | CAN_MCR_AWUM;
+    delay_ms(10); // 等待 CAN 初始化完成
+
+	//--- 初始化 ESP-01S ---
+    ESP01S_Init_UDP();
+
 	// 初始化 TIM1，设定为 200ms 中断一次
 	// 参数1 (ARR): 1999  -> 计数 2000 次
 	// 参数2 (PSC): 16799 -> 预分频 16800 (时钟变为 10kHz, 0.1ms)
@@ -209,24 +217,26 @@ int main(void)
 	TIM2_Int_Init(500-1,840-1); //5ms
 //	TIM3_Int_Init(500-1,840-1);//10Khz的计数频率，计数5K次为500ms 
 
-    KEY_Init();
-	EXTIX_Init();	
+    // 配置 DMA 1 用于 USART1 发送接收 
+    DMA_Config_USART1();    //  应在ESP-01S 初始化后进行
 
     OLED_Clear();
     OLED_ShowString(0, 0, (u8*)"System Online", 16);
-	// 创建两个LED任务  FreeREOS部分
+    OLED_Refresh_Gram(); // 刷新
+    delay_ms(1000);
+    //--- OLED 进入主界面 ---
+    OLED_Clear();
+    OLED_ShowString(0, 0, (u8*)" Tar    AS   sta", 16);
+    OLED_Refresh_Gram(); // 刷新
+	
 //------------------ FreeRTOS 任务创建 -------------------
+    // 创建两个LED任务  FreeREOS部分
 	//xTaskCreate(Task1, "LED1_Task", 128, NULL, 1, NULL); 
 	//xTaskCreate(Task2, "LED2_Task", 128, NULL, 1, NULL); 
 	// 启动调度器 
 	//vTaskStartScheduler();
-//------------------------------------------
-	OLED_Clear();
-    OLED_ShowString(0, 0, (u8*)" Tar    AS   sta", 16);
-    OLED_Refresh_Gram(); // 第一次刷新，显示初始化完成
-    //delay_ms(1000);      // 停顿1秒让你看到提示
-	//OLED_Clear(); 
-//------------------------------------------
+//------------------ FreeRTOS 任务创建结束 -------------------
+    // 初始化所有电机状态
     for(int i=0; i<3; i++)
     {
         Motors[i].last_tick = 0; // 初始为 0
@@ -235,6 +245,8 @@ int main(void)
 //******** 主循环程序 ***********//
 	while(1)
 	{
+        LED_MA = !LED_MA;
+        //UART1ComReply();
         // ============================
         // 主循环：处理紧急任务
         // ============================
@@ -256,7 +268,7 @@ int main(void)
         if (oled_tick >= 20)
         {
             oled_tick = 0;
-            LED_MA = !LED_MA;
+            //LED_MA = !LED_MA;
             OLED_Refresh();
         }
         if(mpu_int_flag)
@@ -301,59 +313,8 @@ int main(void)
         //UART2ComReply();
 	}
 }
-
-//******************************************************
-//
-//*****************************************************
-u16 ascii_to_hex_id(unsigned char *ascii)
-{
-    u32 value = 0;
-    char c;
-	int i;
-    for (i = 0; i < 3; i++)
-    {
-        c = ascii[i];
-        value <<= 4;  // 左移 4 bit，为下一个 nibble 腾位置
-
-        if (c >= '0' && c <= '9')
-            value |= (c - '0');
-        else if (c >= 'A' && c <= 'F')
-            value |= (c - 'A' + 10);
-        else if (c >= 'a' && c <= 'f')
-            value |= (c - 'a' + 10);
-        else
-            return 0;  // 非法字符处理
-    }
-
-    return value;
-}
-//******************************************************
-//
-//*****************************************************
-u8 ascii_to_hex_data(unsigned char *ascii)
-{
-    u32 value = 0;
-    char c;
-	int i;
-    for (i = 0; i < 2; i++)
-    {
-        c = ascii[i];
-        value <<= 4;  // 左移 4 bit，为下一个 nibble 腾位置
-
-        if (c >= '0' && c <= '9')
-            value |= (c - '0');
-        else if (c >= 'A' && c <= 'F')
-            value |= (c - 'A' + 10);
-        else if (c >= 'a' && c <= 'f')
-            value |= (c - 'a' + 10);
-        else
-            return 0;  // 非法字符处理
-    }
-
-    return value;
-}
 //------------------------------------------------------
-// OLED 刷新
+// OLED 主界面刷新
 //------------------------------------------------------
 void OLED_Refresh(void)
 {

@@ -36,6 +36,7 @@ u8  u8Uart2_flag,u8Uart2_flag_test;
 int32_t recv_uart2_M1_val,recv_uart2_M2_val,recv_uart2_M3_val;
 
 int32_t temp_val;
+u8  rData1Temp,rData2Temp;
 //=========================================================
 //		 USART1 中断服务程序		  
 //=========================================================
@@ -46,6 +47,24 @@ void USART1_IRQHandler(void)
 #ifdef OS_CRITICAL_METHOD 	//如果OS_CRITICAL_METHOD定义了,说明使用ucosII了.
 	OSIntEnter();    
 #endif
+//========UART1 PE校验错误判断===============================
+	if(USART1->SR&1)		//PE校验错误，软件清零，看说明书
+	{			
+		rData1Temp=USART1->DR;
+		USART1->SR&=!1;	
+	}				  
+//========UART1 ORE过载错误判断===============================
+	if(USART1->SR&(1<<3))
+	{				
+		rData1Temp=USART1->DR;	
+		USART1->SR&=!(1<<3);				
+	}	
+//========UART1 FE帧错误判断===============================
+	if(USART1->SR&(1<<1))		//FE帧错误，软件清零，看说明书
+	{			
+		USART1->SR&=!(1<<1);	
+		rData1Temp=USART1->DR;		
+	}			
 //==== UART1 RxD ==========================================  	
 	if(USART1->SR&(1<<5))//接收到数据
 	{	 
@@ -109,6 +128,24 @@ void USART2_IRQHandler(void)
 #ifdef OS_CRITICAL_METHOD 	//如果OS_CRITICAL_METHOD定义了,说明使用ucosII了.
 	OSIntEnter();    
 #endif
+//========UART2 PE校验错误判断===============================
+	if(USART2->SR&1)		//PE校验错误，软件清零，看说明书
+	{			
+		rData1Temp=USART2->DR;
+		USART2->SR&=!1;	
+	}				  
+//========UART2 ORE过载错误判断===============================
+	if(USART2->SR&(1<<3))
+	{				
+		rData2Temp=USART2->DR;	
+		USART2->SR&=!(1<<3);				
+	}	
+//========UART2 FE帧错误判断===============================
+	if(USART2->SR&(1<<1))		//FE帧错误，软件清零，看说明书
+	{			
+		USART2->SR&=!(1<<1);	
+		rData2Temp=USART2->DR;		
+	}			
 //==== UART2 RxD ==========================================  	
 	if(USART2->SR&(1<<5))//接收到数据
 	{	 
