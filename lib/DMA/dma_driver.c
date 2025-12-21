@@ -1,6 +1,9 @@
 #include "dma_driver.h"
 #include <stdio.h> 
 #include <string.h> 
+//=============================================
+#define DMA_TX_BUFFER_SIZE  128  // 发送缓冲区大小
+#define DMA_RX_BUFFER_SIZE  256  // 接收缓冲区大小 (建议2的幂次方)
 //==============================================================================
 // 变量定义 (真正的内存分配发生在这里)
 //==============================================================================
@@ -52,31 +55,37 @@ void DMA_Config_USART1(void)
     // 注意：这里不开启 EN，等到要发送时才开
     DMA2_Stream7->CR = (4U << 25) | (1U << 6) | (1U << 10) | (2U << 16);
 }
-
-uint8_t DMA_USART1_Start_TX(uint16_t len)
+//------------------------------------------------
+//
+//------------------------------------------------
+uint8_t DMA_USART1_Start_TX_DoubleBuf(uint32_t buffer_addr, uint16_t len)
 {
     // 1. 检查 DMA 是否忙碌 (EN位)
-    if ((DMA2_Stream7->CR & DMA_SxCR_EN) != 0)
+    // 如果上一次 20ms 的数据还没发完，说明波特率太低或数据量太大
+    if ((DMA2_Stream7->CR & (1 << 0)) != 0) 
     {
-        return 1; // 忙碌，发送失败
+        return 1; 
     }
 
     // 2. 清除上次发送完成标志 (HIFCR)
-    // Stream7 对应 High Interrupt Flag Clear Register
-    DMA2->HIFCR |= (DMA_HIFCR_CTCIF7 | DMA_HIFCR_CHTIF7 | DMA_HIFCR_CTEIF7);
+    // Stream7 对应通道的 CTCIF7(完成), CHTIF7(半完成), CTEIF7(错误) 等
+    DMA2->HIFCR |= (0x3D << 22); // 0x3D 清除 Stream7 的所有中断标志
 
-    // 3. 设置本次发送长度
+    // 3. 设置本次发送长度 (NDTR)
     DMA2_Stream7->NDTR = len;
 
-    // 4. 设置内存地址 (虽然通常不变，但为了安全建议每次重设)
-    DMA2_Stream7->M0AR = (uint32_t)dma_tx_buffer;
+    // 4. 【核心修改】设置本次发送的内存地址
+    // 传入 Ping 或 Pong 缓冲区的首地址
+    DMA2_Stream7->M0AR = buffer_addr;
 
     // 5. 开启 DMA
-    DMA2_Stream7->CR |= DMA_SxCR_EN;
+    DMA2_Stream7->CR |= (1 << 0);
 
-    return 0; // 成功
+    return 0; 
 }
-
+//------------------------------------------------
+//
+//------------------------------------------------
 uint32_t DMA_Get_RX_Current_Pos(void)
 {
     // NDTR 是倒计数的，所以用 总大小 - 剩余大小 = 当前位置
@@ -85,7 +94,7 @@ uint32_t DMA_Get_RX_Current_Pos(void)
 //==============================================================================
 // USART2 相关的 DMA 配置函数
 //============================================================================== 
-void DMA_Config_USART2(void)
+/*void DMA_Config_USART2(void)
 {
     // 1. 【关键】开启 DMA1 时钟 (注意是 DMA1)
     RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
@@ -117,37 +126,7 @@ void DMA_Config_USART2(void)
     DMA1_Stream6->CR = (4U << 25) | (1U << 6) | (1U << 10) | (2U << 16);
     
     // 注意：此时不开启 EN，等发送函数来开
-}
-//===========================================================
-//  填充数据并启动 DMA 发送
-//===========================================================
-void IMU_Send_Data(float gx, float gy, float gz, 
-                   float ax, float ay, float az, 
-                   float pitch, float roll, float yaw)
-{
-    int len;
-
-    // 1. 检查 DMA1 Stream6 是否忙碌
-    if (DMA1_Stream6->CR & 1) return;
-
-    // 2. 清除 Stream6 传输完成标志 (HIFCR)
-    // 0x3D << 16 是掩码，覆盖 Stream6 的所有标志位
-    DMA1->HIFCR = (0x3F << 16);
-
-    // 3. 格式化数据
-    len = sprintf((char*)dma_tx_buffer, 
-                  "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\r\n",
-                  gx, gy, gz, ax, ay, az, pitch, roll, yaw);
-
-    // 4. 设置长度
-    DMA1_Stream6->NDTR = len;
-    
-    // 5. 确保地址正确
-    DMA1_Stream6->M0AR = (uint32_t)dma_tx_buffer;
-
-    // 6. 开启 DMA
-    DMA1_Stream6->CR |= 1;
-}
+}*/
 
 
 

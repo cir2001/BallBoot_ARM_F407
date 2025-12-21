@@ -12,12 +12,12 @@
 //		3. mpu6500 DMP V6.12 移植 对内容进行了针对stm32F407的修改
 //		   模拟I2C通讯方式 如果MPU初始化无法正确读出地址值，考虑连接线屏蔽问题
 //		   采用绞线方式连接
-//		4. TIM8的CH1~CH4通道输出PWM波，驱动电机
-//		5. TIM2,TIM3，TIM4,TIM5作为编码器接口使用
+//		4. TIM8的CH1~CH4通道输出PWM波，驱动电机 （减速电机方案，暂未使用）
+//		5. TIM2,TIM3，TIM4,TIM5作为编码器接口使用 （减速电机方案，暂未使用）
 //		6. CAN总线通讯，波特率500Kbps
 //		7. FreeRTOS实时操作系统移植
 //   	8. 预留SPI1接口，可连接树莓派等主控
-//  	9. TIM1作为中断定时器使用
+//  	9. TIM1作为中断定时器使用 （减速电机方案，暂未使用）
 // 		10.KEY按键扫描
 //*****************************************************************	
 //=================================================================		
@@ -49,7 +49,7 @@
 //----- CAN1 总线 -------
 //		CAN_TX					PA12
 //		CAN_RX					PA11
-//----- 电机驱动 -------
+//-------- 电机驱动  减速电机方案（暂未使用）---------------------------
 //		Motor A PWM Out		TIM8_CH1		PC6
 //		Motor B PWM Out		TIM8_CH2		PC7
 //		Motor C PWM Out		TIM8_CH3		PC8
@@ -72,19 +72,20 @@
 //		Motor C AIN1			PB9
 //		Motor D BIN1			PE0
 //		Motor D BIN2			PE1
-//----- USART接口 -------
+//---------------- USART接口  --------------------------------------- 
+//--- ESP-01S  DMA方式 ---
 //	UART1   115200，1start，8bit，1stop，no parity 
 //		USART1_TX			PA9
 //		USART1_RX			PA10
-//-------------------------------------------------
+//--- 中断方式 ---
 //	UART2   115200，1start，8bit，1stop，no parity 
 //		USART2_TX			PA2
 //		USART2_RX			PA3
-//-------------------------------------------------
+//--- 蓝牙模块 ---
 // 	UART3   115200，1start，8bit，1stop，no parity 
 //		USART3_TX			PD8
 //		USART3_RX			PD9
-//-----树莓派SPI接口-----
+//-------------- 树莓派SPI接口 ---------------------------------------
 //  	SPI1_MOSI           PA7
 // 	 	SPI1_MISO           PA6
 //  	SPI1_SCK            PA5
@@ -134,6 +135,28 @@
 void Task1(void *pvParameters);
 void Task2(void *pvParameters);
 void OLED_Refresh(void);
+//-------------------------------------------------
+// 数据处理结构体
+//------------------------------------------------
+#pragma pack(1)// 必须加在结构体定义最前面
+typedef struct {
+    uint32_t timestamp;
+    int16_t  accel[3];
+    int16_t  gyro[3];
+    int32_t  motor_spd[3];
+} SampleData_t;
+
+typedef struct {
+    uint8_t      head[2];   // 0xAA 0x55
+    SampleData_t samples[20];
+    uint8_t      tail[2];   // 0x0D 0x0A
+} BatchPacket_t;
+#pragma pack()// 恢复默认对齐方式
+// 定义两个缓冲区：Ping 和 Pong
+BatchPacket_t PingPongBuffer[2]; 
+volatile uint8_t write_index = 0; // 当前 CPU 正在写入的缓冲区索引 (0 或 1)
+volatile uint8_t sample_in_buf_cnt = 0;    // 当前缓冲区内已存的样本数 (0-19)
+extern  uint32_t sys_ms_ticks; // 全局毫秒时间戳
 //-----------------------------------------------
 // 外部变量声明
 //-----------------------------------------------
@@ -143,7 +166,8 @@ extern	u8  USART2_RX_BUF[USART_TRANS_LEN];     //接收缓冲,最大128个字节
 extern	u8  USART2_TX_BUF[USART_TRANS_LEN];     //发送缓冲,最大128个字节.
 extern	u8  USART3_RX_BUF[USART_TRANS_LEN];     //接收缓冲,最大128个字节.
 extern	u8  USART3_TX_BUF[USART_TRANS_LEN];     //发送缓冲,最大128个字节.
-extern  u8  mpu_int_flag,UART1_RX_Flag;
+
+extern  u8  mpu_data_ready,UART1_RX_Flag;
 
 extern int32_t recv_uart2_M1_val,recv_uart2_M2_val,recv_uart2_M3_val;
 
@@ -165,7 +189,6 @@ u8 mpu_int_count;
 u32 u16counter;
 
 u16 oled_tick;
-unsigned char a2h_id[3],a2h[8][2];
 
 // 定义一个结构体变量存放角度
 IMU_Angle_t current_angle;
@@ -186,11 +209,10 @@ int main(void)
     delay_us(10);
     OLED_Init();
     OLED_Clear();
-    OLED_ShowString(0, 0, "System Booting...", 16);
+    OLED_ShowString(0, 0,(u8*)"System Booting...", 16);
     OLED_Refresh_Gram(); // 第一次刷新
     delay_ms(2000); // 保持 2 秒
 
-	EXTIX_Init();
     // --- 初始化传感器，但不开启定时器发送 ---
     MPU6500_Init();
     delay_ms(10); // 等待 MPU6500 准备好
@@ -220,13 +242,16 @@ int main(void)
     // 配置 DMA 1 用于 USART1 发送接收 
     DMA_Config_USART1();    //  应在ESP-01S 初始化后进行
 
+    // 启动外部中断
+    EXTIX_Init();
+
     OLED_Clear();
     OLED_ShowString(0, 0, (u8*)"System Online", 16);
     OLED_Refresh_Gram(); // 刷新
     delay_ms(1000);
     //--- OLED 进入主界面 ---
     OLED_Clear();
-    OLED_ShowString(0, 0, (u8*)" Tar    AS   sta", 16);
+    OLED_ShowString(0, 0, (u8*)" Tar    AS   Sta", 16);
     OLED_Refresh_Gram(); // 刷新
 	
 //------------------ FreeRTOS 任务创建 -------------------
@@ -245,12 +270,12 @@ int main(void)
 //******** 主循环程序 ***********//
 	while(1)
 	{
-        LED_MA = !LED_MA;
+        //LED_MA = !LED_MA;
         //UART1ComReply();
         // ============================
         // 主循环：处理紧急任务
         // ============================
-		// 1. 检查是否有新指令
+		// 检查是否有新指令
         if (u8Uart2_flag == 1)
         {
 			// 从串口2接收新指令
@@ -261,23 +286,12 @@ int main(void)
             // 清除标志位
             u8Uart2_flag = 0;
         }
-        // ============================
-        // 主循环：处理非紧急任务
-        // ============================
-        // 每 100ms 刷新一次屏幕 (1ms * 100 = 100ms)
-        if (oled_tick >= 20)
-        {
-            oled_tick = 0;
-            //LED_MA = !LED_MA;
-            OLED_Refresh();
-        }
-        if(mpu_int_flag)
+        // MPU data process
+        if(mpu_data_ready)
 		{
-            mpu_int_count++;
-			mpu_int_flag = 0;
+			mpu_data_ready = 0;
             //---- 读取 MPU6500 数据 ----
-            MPU6500_Get_Gyroscope(&gy_X, &gy_Y, &gy_Z);
-            MPU6500_Get_Accelerometer(&ac_X, &ac_Y, &ac_Z);
+            
             //--- 准备数据 (单位转换) ---
             // 假设 Gyro 灵敏度为 16.4 LSB/(deg/s) (即量程 2000)
             // 必须转为 rad/s:  Raw / 16.4 * (PI / 180) ≈ Raw * 0.0010653
@@ -288,27 +302,56 @@ int main(void)
             AHRS_Update(gx, gy, gz, ac_X, ac_Y, ac_Z, 0.001f);
 
             // 5. 获取结果
-            AHRS_GetEulerAngle(&current_angle); 
+            AHRS_GetEulerAngle(&current_angle);    
             
-       }
-       if(mpu_int_count>=10)
-       {
-           mpu_int_count = 0;
-            // 发送 gx, gy, gz 而不是 gy_X, gy_Y, gy_Z
-            // gx 已经在上面计算过了：float gx = gy_X * 0.0010653f;
-            // 但 gx 是局部变量，需要在 if 块外部定义，或者重新计算
-            
-            float send_gx = gy_X * 0.0010653f;
-            float send_gy = gy_Y * 0.0010653f;
-            float send_gz = gy_Z * 0.0010653f;
-            
-            IMU_Send_Data(send_gx, send_gy, send_gz, 
-                          (float)ac_X, (float)ac_Y, (float)ac_Z, 
-                          current_angle.pitch, current_angle.roll, current_angle.yaw);
-            
-            LED_CAN = !LED_CAN;
-       }
+            // 1. 定位当前使用的缓冲区指针
+            BatchPacket_t* p_buf = &PingPongBuffer[write_index];
 
+            // 2. 填充数据并打上时间戳
+            p_buf->samples[sample_in_buf_cnt].timestamp = sys_ms_ticks;
+            // ... 此处填充 MPU6500 数据和电机转速 ...
+            p_buf->samples[sample_in_buf_cnt].accel[0] = 0x00; 
+            p_buf->samples[sample_in_buf_cnt].accel[1] = 0x00; 
+            p_buf->samples[sample_in_buf_cnt].accel[2] = 0x00; 
+            p_buf->samples[sample_in_buf_cnt].gyro[0] = 0x00;
+            p_buf->samples[sample_in_buf_cnt].gyro[1] = 0x00;
+            p_buf->samples[sample_in_buf_cnt].gyro[2] = 0x00;
+            p_buf->samples[sample_in_buf_cnt].motor_spd[0] = 0x00;
+            p_buf->samples[sample_in_buf_cnt].motor_spd[1] = 0x00;
+            p_buf->samples[sample_in_buf_cnt].motor_spd[2] = 0x00;
+
+            sample_in_buf_cnt++;
+
+            // 3. 满 20 组数据 (20ms 周期到)
+            if(sample_in_buf_cnt >= 20)
+            {
+                // 封装包头包尾
+                p_buf->head[0] = 0xAA; p_buf->head[1] = 0x55;
+                p_buf->tail[0] = 0x0D; p_buf->tail[1] = 0x0A;
+
+                // 调试用：如果发送失败（DMA忙），翻转另一个 LED 报警 如果上电有问题，使用这段代码
+                /*if(DMA_USART1_Start_TX_DoubleBuf((uint32_t)p_buf, sizeof(BatchPacket_t)) != 0)
+                {
+                    LED_MA = !LED_MA; 
+                }*/
+                DMA_USART1_Start_TX_DoubleBuf((uint32_t)p_buf, sizeof(BatchPacket_t));
+
+                // 5. 【关键】立即切换索引，下个 1ms 采样将写到另一个缓冲区
+                write_index = !write_index; 
+                sample_in_buf_cnt = 0;
+            }
+       }
+        // ============================
+        // 主循环：处理非紧急任务
+        // ============================
+        // 每 100ms 刷新一次屏幕 (1ms * 100 = 100ms)
+        if (oled_tick >= 20)
+        {
+            oled_tick = 0;
+            //LED_MA = !LED_MA;
+            OLED_Refresh();
+            //UART2ComReply();
+        }
         //UART1ComReply();
         //UART2ComReply();
 	}
@@ -321,7 +364,7 @@ void OLED_Refresh(void)
     char buf[20]; 
     uint32_t current_time = Get_System_Tick();
     // --- 第一行 (Y=16) ---
-    sprintf(buf, "%6d %5d", Target_Speed_M1, Motors[0].AS5600_val);
+    sprintf(buf, "%6ld %5ld", Target_Speed_M1, Motors[0].AS5600_val);
     OLED_ShowString(0, 16, (u8*)buf, 16);
     // 1. 判断物理层是否掉线 (超时检测)
     // 如果当前时间比上次收到回包的时间大 100ms
@@ -341,7 +384,7 @@ void OLED_Refresh(void)
     }
 
     // --- 第二行 (Y=32) ---
-    sprintf(buf, "%6d %5d", Target_Speed_M2, Motors[1].AS5600_val);
+    sprintf(buf, "%6ld %5ld", Target_Speed_M2, Motors[1].AS5600_val);
     OLED_ShowString(0, 32, (u8*)buf, 16);
     // 1. 判断物理层是否掉线 (超时检测)
     // 如果当前时间比上次收到回包的时间大 100ms
@@ -361,7 +404,7 @@ void OLED_Refresh(void)
     }
 
     // --- 第三行 (Y=48) ---
-    sprintf(buf, "%6d %5d", Target_Speed_M3, Motors[2].AS5600_val);
+    sprintf(buf, "%6ld %5ld", Target_Speed_M3, Motors[2].AS5600_val);
     OLED_ShowString(0, 48, (u8*)buf, 16);
     // 1. 判断物理层是否掉线 (超时检测)
     // 如果当前时间比上次收到回包的时间大 100ms
