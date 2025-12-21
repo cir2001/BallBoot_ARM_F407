@@ -211,11 +211,19 @@ int main(void)
     OLED_Clear();
     OLED_ShowString(0, 0,(u8*)"System Booting...", 16);
     OLED_Refresh_Gram(); // 第一次刷新
-    delay_ms(2000); // 保持 2 秒
+    delay_ms(3000); // 保持 2 秒
 
     // --- 初始化传感器，但不开启定时器发送 ---
-    MPU6500_Init();
-    delay_ms(10); // 等待 MPU6500 准备好
+    OLED_ShowString(0, 16, (u8*)"Init MPU...", 16);
+    OLED_Refresh_Gram();
+    delay_ms(2000); // 保持 2 秒
+    if(MPU6500_Init() != 0) 
+    {
+        // 如果初始化失败，让一个 LED 长亮或快闪报警
+        while(1) { LED_MA = !LED_MA; delay_ms(100); }
+    }
+    delay_ms(100); // 等待 MPU6500 准备好
+
     // --- 初始化 AHRS 算法 ---
     AHRS_Init();
 
@@ -223,13 +231,15 @@ int main(void)
     uart_init1(84,115200);
     uart_init2(42,115200);
     uart_init3(42,115200);
-    delay_ms(10); // 等待串口初始化完成
+    delay_ms(100); // 等待串口初始化完成
 
     //--- 初始化 CAN ---
     CAN1_Mode_Init();
-    delay_ms(10); // 等待 CAN 初始化完成
+    delay_ms(100); // 等待 CAN 初始化完成
 
 	//--- 初始化 ESP-01S ---
+    OLED_ShowString(0, 16, (u8*)"Init ESP...", 16);
+    OLED_Refresh_Gram();
     ESP01S_Init_UDP();
 
 	// 初始化 TIM1，设定为 200ms 中断一次
@@ -240,9 +250,16 @@ int main(void)
 //	TIM3_Int_Init(500-1,840-1);//10Khz的计数频率，计数5K次为500ms 
 
     // 配置 DMA 1 用于 USART1 发送接收 
+    OLED_ShowString(0, 16, (u8*)"Init DMA...", 16);
+    OLED_Refresh_Gram();
+    delay_ms(100); // 等待 CAN 初始化完成
     DMA_Config_USART1();    //  应在ESP-01S 初始化后进行
+    delay_ms(100); // 等待 初始化完成
 
     // 启动外部中断
+    OLED_ShowString(0, 16, (u8*)"Init EXTI...", 16);
+    OLED_Refresh_Gram();
+    delay_ms(100); // 等待 CAN 初始化完成
     EXTIX_Init();
 
     OLED_Clear();
@@ -310,15 +327,15 @@ int main(void)
             // 2. 填充数据并打上时间戳
             p_buf->samples[sample_in_buf_cnt].timestamp = sys_ms_ticks;
             // ... 此处填充 MPU6500 数据和电机转速 ...
-            p_buf->samples[sample_in_buf_cnt].accel[0] = 0x00; 
-            p_buf->samples[sample_in_buf_cnt].accel[1] = 0x00; 
-            p_buf->samples[sample_in_buf_cnt].accel[2] = 0x00; 
-            p_buf->samples[sample_in_buf_cnt].gyro[0] = 0x00;
-            p_buf->samples[sample_in_buf_cnt].gyro[1] = 0x00;
-            p_buf->samples[sample_in_buf_cnt].gyro[2] = 0x00;
-            p_buf->samples[sample_in_buf_cnt].motor_spd[0] = 0x00;
-            p_buf->samples[sample_in_buf_cnt].motor_spd[1] = 0x00;
-            p_buf->samples[sample_in_buf_cnt].motor_spd[2] = 0x00;
+            p_buf->samples[sample_in_buf_cnt].accel[0] = 0x01; 
+            p_buf->samples[sample_in_buf_cnt].accel[1] = 0x02; 
+            p_buf->samples[sample_in_buf_cnt].accel[2] = 0x03; 
+            p_buf->samples[sample_in_buf_cnt].gyro[0] = 0x11;
+            p_buf->samples[sample_in_buf_cnt].gyro[1] = 0x12;
+            p_buf->samples[sample_in_buf_cnt].gyro[2] = 0x13;
+            p_buf->samples[sample_in_buf_cnt].motor_spd[0] = 0x21;
+            p_buf->samples[sample_in_buf_cnt].motor_spd[1] = 0x22;
+            p_buf->samples[sample_in_buf_cnt].motor_spd[2] = 0x23;
 
             sample_in_buf_cnt++;
 
@@ -330,11 +347,16 @@ int main(void)
                 p_buf->tail[0] = 0x0D; p_buf->tail[1] = 0x0A;
 
                 // 调试用：如果发送失败（DMA忙），翻转另一个 LED 报警 如果上电有问题，使用这段代码
-                /*if(DMA_USART1_Start_TX_DoubleBuf((uint32_t)p_buf, sizeof(BatchPacket_t)) != 0)
+                if((DMA2_Stream7->CR & 0x01) == 0) 
                 {
-                    LED_MA = !LED_MA; 
-                }*/
-                DMA_USART1_Start_TX_DoubleBuf((uint32_t)p_buf, sizeof(BatchPacket_t));
+                    DMA_USART1_Start_TX_DoubleBuf((uint32_t)p_buf, sizeof(BatchPacket_t));
+                } else 
+                {
+                    // 如果进到这里，说明 460800 竟然还没发完，这绝对不正常
+                    // 可能是串口死锁了
+                    LED_MA = !LED_MA; // 让一个 LED 快速闪烁作为报警
+                }
+                //DMA_USART1_Start_TX_DoubleBuf((uint32_t)p_buf, sizeof(BatchPacket_t));
 
                 // 5. 【关键】立即切换索引，下个 1ms 采样将写到另一个缓冲区
                 write_index = !write_index; 
@@ -345,7 +367,7 @@ int main(void)
         // 主循环：处理非紧急任务
         // ============================
         // 每 100ms 刷新一次屏幕 (1ms * 100 = 100ms)
-        if (oled_tick >= 20)
+        if (oled_tick >= 50)
         {
             oled_tick = 0;
             //LED_MA = !LED_MA;

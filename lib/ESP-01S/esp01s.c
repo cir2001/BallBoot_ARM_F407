@@ -24,40 +24,40 @@
 uint8_t ESP01S_Init_UDP(void)
 { 
     // 测试指令
-    OLED_ShowString(0, 16, "Step 1: AT...", 16);
+    OLED_ShowString(0, 32, "Step 1: AT...", 16);
     OLED_Refresh_Gram(); // 刷新OLED显示
     ESP_UART1_SendString("AT\r\n");
-    ESP_Delay_ms(500); // 增加延时，给模块反应时间
+    ESP_Delay_ms(2000); // 增加延时，给模块反应时间
     
     // 修改波特率
-    OLED_ShowString(0, 16, "Step 2: Baud..", 16);
+    OLED_ShowString(0, 32, "Step 2: Baud..", 16);
     OLED_Refresh_Gram(); // 刷新OLED显示
     ESP_UART1_SendString("AT+UART_CUR=460800,8,1,0,0\r\n");
     ESP01S_Switch_Baud_Safe(BRR_460800); // 使用上面那个安全的切换函数
-    //ESP_Delay_ms(300); // 切换频率后必须停顿，等待电平稳定
+    ESP_Delay_ms(500); // 切换频率后必须停顿，等待电平稳定
 
-    OLED_ShowString(0, 16, "Step 3: AT...", 16);
+    OLED_ShowString(0, 32, "Step 3: AT...", 16);
     OLED_Refresh_Gram(); // 刷新OLED显示
     ESP_UART1_SendString("AT\r\n"); 
-    ESP_Delay_ms(300);
+    ESP_Delay_ms(500);
 
     ESP_UART1_SendString("AT+CWMODE=1\r\n");
-    ESP_Delay_ms(300);
+    ESP_Delay_ms(500);
 
     // UDP 连接
     // 注意：确保 TARGET_IP 等宏是字符串格式
-    OLED_ShowString(0, 16, "Step 3: UDP...", 16);
+    OLED_ShowString(0, 32, "Step 3: UDP...", 16);
     OLED_Refresh_Gram(); // 刷新OLED显示
-    ESP_UART1_SendString("AT+CIPSTART=\"UDP\",\"192.168.0.111\",8080,1234,0\r\n");
+    ESP_UART1_SendString("AT+CIPSTART=\"UDP\",\"192.168.0.111\",12345,1111,0\r\n");
     ESP_Delay_ms(800); // 连接网络耗时较长，增加延时
 
     ESP_UART1_SendString("AT+CIPMODE=1\r\n");
-    ESP_Delay_ms(300);
+    ESP_Delay_ms(500);
 
-    OLED_ShowString(0, 16, "Step 4: Send..", 16);
+    OLED_ShowString(0, 32, "Step 4: Send..", 16);
     OLED_Refresh_Gram(); // 刷新OLED显示
     ESP_UART1_SendString("AT+CIPSEND\r\n");
-    ESP_Delay_ms(300);
+    ESP_Delay_ms(500);
     
     return 1;
 }
