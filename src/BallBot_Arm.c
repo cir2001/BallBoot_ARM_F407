@@ -269,7 +269,7 @@ int main(void)
     //--- OLED 进入主界面 ---
     OLED_Clear();
     OLED_ShowString(0, 0, (u8*)" Tar    AS   Sta", 16);
-    OLED_Refresh_Gram(); // 刷新
+    OLED_Refresh_Gram(); // 刷新 
 	
 //------------------ FreeRTOS 任务创建 -------------------
     // 创建两个LED任务  FreeREOS部分
