@@ -122,140 +122,66 @@ void USART1_IRQHandler(void)
 //=========================================================
 // 		USART2 中断服务程序		
 //=========================================================
-#if EN_USART2_RX   //如果使能了接收
 void USART2_IRQHandler(void)
 {
-#ifdef OS_CRITICAL_METHOD 	//如果OS_CRITICAL_METHOD定义了,说明使用ucosII了.
-	OSIntEnter();    
-#endif
-//========UART2 PE校验错误判断===============================
-	if(USART2->SR&1)		//PE校验错误，软件清零，看说明书
-	{			
-		rData1Temp=USART2->DR;
-		USART2->SR&=!1;	
-	}				  
-//========UART2 ORE过载错误判断===============================
-	if(USART2->SR&(1<<3))
-	{				
-		rData2Temp=USART2->DR;	
-		USART2->SR&=!(1<<3);				
-	}	
-//========UART2 FE帧错误判断===============================
-	if(USART2->SR&(1<<1))		//FE帧错误，软件清零，看说明书
-	{			
-		USART2->SR&=!(1<<1);	
-		rData2Temp=USART2->DR;		
-	}			
-//==== UART2 RxD ==========================================  	
-	if(USART2->SR&(1<<5))//接收到数据
-	{	 
-		RxD2Buf=USART2->DR;
-		USART2->SR&=!(1<<5);
-		switch(RxD2Buf)	 {
-			case '#':
-				USART2_RX_BUF[0]='#';
-				RxD2pt=1;
-			break; 
-			case '.':		// 连接PC机通讯，结束符<.>
-				switch(USART2_RX_BUF[1])	{
-			//==== A ====
-					case 'A':	// 
-							UART2ComReply();		// 指令回报
-							break;
-			//==== S ==== 
-					case 'S':		// 指令格式: #S+20000,-20000,+20000.
-							LED_U2 = !LED_U2;
-							u8Uart2_flag = 1;
-							u8Uart2_flag_test= 1;
-							//--- M1 ----------------------
-							temp_val =  (USART2_RX_BUF[3] - '0') * 10000 +
-										(USART2_RX_BUF[4] - '0') * 1000 +
-										(USART2_RX_BUF[5] - '0') * 100 +
-										(USART2_RX_BUF[6] - '0') * 10 +
-										(USART2_RX_BUF[7] - '0');
-							if(USART2_RX_BUF[2] == '-')
-							{
-								recv_uart2_M1_val = -temp_val;
-							}
-							else
-							{
-								recv_uart2_M1_val = temp_val;
-							}	
+    u8 res;
+    u32 sr = USART2->SR; // 这里的 SR 必须最先读取
 
-							// 限制最大速度 (防止瞎发指令导致堵转)
-                			if(recv_uart2_M1_val > 25000) recv_uart2_M1_val = 25000;
-               				if(recv_uart2_M1_val < -25000) recv_uart2_M1_val = -25000;
-							//--- M2 ----------------------
-							temp_val =  (USART2_RX_BUF[10] - '0') * 10000 +
-										(USART2_RX_BUF[11] - '0') * 1000 +
-										(USART2_RX_BUF[12] - '0') * 100 +
-										(USART2_RX_BUF[13] - '0') * 10 +
-										(USART2_RX_BUF[14] - '0');
-							if(USART2_RX_BUF[9] == '-')
-							{
-								recv_uart2_M2_val = -temp_val;
-							}
-							else
-							{
-								recv_uart2_M2_val = temp_val;
-							}	
+    // 1. 强制错误处理：解决 ORE、FE、NE 锁死问题
+    // 如果不清除这些标志，接收中断将永远停止触发
+    if (sr & 0x0F) // 检查 ORE, NE, FE, PE 位
+    {
+        res = USART2->DR;     // 必须读 DR 才能配合 SR 的读取清除 ORE
+        USART2->SR &= ~0x1F;  // 使用 ~ 符号正确清除所有状态位
+        RxD2pt = 0;           // 发生硬件错误时重置指针，丢弃错误包
+        return;
+    }
 
-							// 限制最大速度 (防止瞎发指令导致堵转)
-                			if(recv_uart2_M2_val > 25000) recv_uart2_M2_val = 25000;
-               				if(recv_uart2_M2_val < -25000) recv_uart2_M2_val = -25000;
-							//--- M3 ----------------------
-							temp_val =  (USART2_RX_BUF[17] - '0') * 10000 +
-										(USART2_RX_BUF[18] - '0') * 1000 +
-										(USART2_RX_BUF[19] - '0') * 100 +
-										(USART2_RX_BUF[20] - '0') * 10 +
-										(USART2_RX_BUF[21] - '0');
-							if(USART2_RX_BUF[16] == '-')
-							{
-								recv_uart2_M3_val = -temp_val;
-							}
-							else
-							{
-								recv_uart2_M3_val = temp_val;
-							}	
+    // 2. 正常数据接收
+    if (sr & (1 << 5)) // RXNE: 接收缓冲区非空
+    {
+        res = USART2->DR;
+        
+        if (res == '#') // 帧起始符：强制重置，保证同步
+        {
+            RxD2pt = 0;
+            USART2_RX_BUF[RxD2pt++] = res;
+        }
+        else if (res == '.') // 帧结束符
+        {
+            if (RxD2pt < USART_TRANS_LEN)
+            {
+                USART2_RX_BUF[RxD2pt] = '.'; // 保存结束符
+                u8Uart2_flag = 1;            // 通知 main 循环解析处理
+            }
+        }
+        else // 存入缓冲区
+        {
+            if (RxD2pt < USART_TRANS_LEN - 1)
+            {
+                USART2_RX_BUF[RxD2pt++] = res;
+            }
+            else // 缓冲区溢出保护
+            {
+                RxD2pt = 0;
+            }
+        }
+    }
 
-							// 限制最大速度 (防止瞎发指令导致堵转)
-                			if(recv_uart2_M3_val > 25000) recv_uart2_M3_val = 25000;
-               				if(recv_uart2_M3_val < -25000) recv_uart2_M3_val = -25000;
-							break;
-			//==== K ===== 
-					case 'K':		//
-						
-							break;
-			//==== G ===== 
-					case 'G':		// 
-							
-							break;} 
-			//=======defailt====
-			default:
-				USART2_RX_BUF[RxD2pt]=RxD2Buf;
-				RxD2pt++;
-				if(RxD2pt>=40) {RxD2pt=40; u8ErrCode=115;}	// 接收指令错误
-			break;	} 		 									     
-	}
-//==== UART2 TxD ========================================== 
-	if(USART2->SR&(1<<6))//Trasmission complete
-	{
-		if(TxD2pt < TxD2Num)
-		{
-		  USART2->DR = USART2_TX_BUF[TxD2pt];
-		  TxD2pt ++;
-		}else
-		{
-		  u8TxD2Busy = 0;		  //USART1发送结束标志
-		  TxD2pt = TxD2Num;
-		}
-		USART2->SR&=!(1<<6);    //TC=0
-	}  // */	 
-#ifdef OS_CRITICAL_METHOD 	//如果OS_CRITICAL_METHOD定义了,说明使用ucosII了.
-	OSIntExit();  											 
-#endif
-} 
-#endif	
+    // 3. 发送完成处理：修正 &= ~ 逻辑
+    if (sr & (1 << 6)) // TC: 发送完成
+    {
+        if (TxD2pt < TxD2Num)
+        {
+            USART2->DR = USART2_TX_BUF[TxD2pt++];
+        }
+        else
+        {
+            u8TxD2Busy = 0;
+        }
+        USART2->SR &= ~(1 << 6); // 正确清除 TC 位
+    }
+}
 //=========================================================
 // 		USART3 中断服务程序		
 //=========================================================
@@ -376,84 +302,6 @@ void uart_init1(u32 pclk2, u32 bound)
     // --- 4. 使能串口 ---
     USART1->CR1 |= 1 << 13;     // UE (USART Enable)
 }
-//*************************************************************************************//									 
-//初始化IO 串口1(中断方式)
-//pclk2:PCLK2时钟频率(84Mhz)
-//bound:波特率 
-/*void uart_init1(u32 pclk2,u32 bound)
-{  	 
-	float temp;
-	u16 mantissa;
-	u16 fraction;	   
-	temp=(float)(pclk2*1000000)/(bound*16);//得到USARTDIV@OVER8=0
-	mantissa=temp;				 //得到整数部分
-	fraction=(temp-mantissa)*16; //得到小数部分@OVER8=0 
-    mantissa<<=4;
-	mantissa+=fraction; 
-	RCC->AHB1ENR|=1<<0;   	//使能PORTA口时钟  
-	RCC->APB2ENR|=1<<4;  	//使能串口1时钟 
-	GPIO_Set(GPIOA,PIN9|PIN10,GPIO_MODE_AF,GPIO_OTYPE_PP,GPIO_SPEED_50M,GPIO_PUPD_PU);//PA9,PA10,复用功能,上拉输出
- 	GPIO_AF_Set(GPIOA,9,7);	//PA9,AF7
-	GPIO_AF_Set(GPIOA,10,7);//PA10,AF7  	   
-	//波特率设置
- 	USART1->BRR=mantissa; 	//波特率设置	 
-	USART1->CR1&=~(1<<15); 	//设置OVER8=0 
-	USART1->CR1|=1<<3;  	//串口发送使能 
-#if EN_USART1_RX		  	//如果使能了接收
-	//使能接收中断 
-	USART1->CR1|=1<<2;  	//串口接收使能
-	USART1->CR1|=1<<5;    	//接收缓冲区非空中断使
-	USART1->CR1|=1<<6;    //发送缓冲区非空中断使能	    	
-	MY_NVIC_Init(2,1,USART1_IRQn,2);//组2，最低优先级 
-#endif
-	USART1->CR1|=1<<13;  	//串口使能
-}*/
-/*************************************************************** */
-//初始化IO 串口2(DMA模式专用配置)
-//pclk1:PCLK1时钟频率(42Mhz)
-//bound:波特率 
-/*************************************************************** */
-/*void uart_init2(u32 pclk1, u32 bound)
-{   
-    float temp;
-    u16 mantissa;
-    u16 fraction;       
-    
-    // --- 1. 波特率计算 (注意：pclk1 通常是 42MHz) ---
-    temp = (float)(pclk1 * 1000000) / (bound * 16);
-    mantissa = temp;              
-    fraction = (temp - mantissa) * 16; 
-    mantissa <<= 4;
-    mantissa += fraction; 
-
-    // --- 2. 时钟配置 ---
-    RCC->AHB1ENR |= 1 << 0;     // 使能 GPIOA 时钟
-    RCC->APB1ENR |= 1 << 17;    // 【关键】使能 USART2 时钟 (注意是 APB1ENR, Bit 17)
-    
-    // --- 3. GPIO 配置 (PA2=TX, PA3=RX) ---
-    // MODER: 复用模式 (10) -> PA2(位5:4), PA3(位7:6)
-    GPIOA->MODER &= ~( (3<<4) | (3<<6) ); 
-    GPIOA->MODER |=  ( (2<<4) | (2<<6) ); 
-
-    // OSPEEDR: 高速
-    GPIOA->OSPEEDR |= (2<<4) | (2<<6);
-
-    // AFR (复用映射): PA2, PA3 对应 AF7 (USART2)
-    // PA2, PA3 在 AFR[0] (即 AFRLow)
-    // PA2 -> AFRL[11:8], PA3 -> AFRL[15:12]
-    GPIOA->AFR[0] &= ~( (0xF<<8) | (0xF<<12) ); // 清零
-    GPIOA->AFR[0] |=  ( (7<<8)   | (7<<12)   ); // 赋值 0111
-
-    // --- 4. USART2 寄存器配置 ---
-    USART2->BRR = mantissa;     
-    USART2->CR1 &= ~(1 << 15);  // OVER8=0
-    
-    // 【关键】开启 DMA 发送请求 (DMAT)
-    USART2->CR3 |= (1 << 7);    
-
-    // 使能串口 (UE) 和 发送 (TE)
-    USART2->CR1 |= (1 << 13) | (1 << 3); 
-}*/
 /*************************************************************** */
 //初始化IO 串口2
 //pclk1:PCLK1时钟频率(42Mhz)
@@ -483,7 +331,7 @@ void uart_init2(u32 pclk1,u32 bound)
 	USART2->CR1|=1<<2;  	//串口接收使能
 	USART2->CR1|=1<<5;    	//接收缓冲区非空中断使
 	USART2->CR1|=1<<6;    //发送缓冲区非空中断使能	    	
-	MY_NVIC_Init(3,1,USART2_IRQn,2);//组2，最低优先级 
+	MY_NVIC_Init(1,0,USART2_IRQn,2);//组2，最低优先级 
 #endif
 	USART2->CR1|=1<<13;  	//串口使能
 }
@@ -543,6 +391,8 @@ void UART1ComReply(void)
 //=========================================================
 void UART2ComReply(void)
 {
+	if(u8TxD2Busy) return; // 如果正在发送，则退出，避免冲突
+
 	USART2_TX_BUF[1]='A';
 	USART2_TX_BUF[2]=0x35;	
 	USART2_TX_BUF[3]=0x36;
@@ -552,6 +402,7 @@ void UART2ComReply(void)
 
 	TxD2pt = 1;
 	TxD2Num= 6;
+	u8TxD2Busy = 1;  // 置忙碌标志
 	USART2->DR = '&';
 }
 //=========================================================

@@ -129,34 +129,30 @@
 #include "FreeRTOS.h"
 #include "task.h"   
 #include "queue.h"
+
+#include <string.h>  // 必须包含，否则无法识别 memset
+#include <math.h>    // 必须包含，否则无法识别 NAN 常量
+//=================================================
+#define LPF_ALPHA 0.3f
 //**************************************************
 // 函数声明
 //**************************************************
 void Task1(void *pvParameters);
 void Task2(void *pvParameters);
 void OLED_Refresh(void);
-//-------------------------------------------------
-// 数据处理结构体
-//------------------------------------------------
-#pragma pack(1)// 必须加在结构体定义最前面
-typedef struct {
-    uint32_t timestamp;
-    int16_t  accel[3];
-    int16_t  gyro[3];
-    int32_t  motor_spd[3];
-} SampleData_t;
+uint8_t DMA_Submit_And_Switch_Buffer(void);
+void Buffer_Clear_And_Init(HybridPacket_t *buf);
 
-typedef struct {
-    uint8_t      head[2];   // 0xAA 0x55
-    SampleData_t samples[20];
-    uint8_t      tail[2];   // 0x0D 0x0A
-} BatchPacket_t;
-#pragma pack()// 恢复默认对齐方式
 // 定义两个缓冲区：Ping 和 Pong
-BatchPacket_t PingPongBuffer[2]; 
-volatile uint8_t write_index = 0; // 当前 CPU 正在写入的缓冲区索引 (0 或 1)
-volatile uint8_t sample_in_buf_cnt = 0;    // 当前缓冲区内已存的样本数 (0-19)
-extern  uint32_t sys_ms_ticks; // 全局毫秒时间戳
+HybridPacket_t PingPongBuffer[2]; 
+volatile uint8_t  write_index = 0;       // 当前写入缓冲区的索引
+volatile uint8_t  sample_in_buf_cnt = 0; // 当前缓冲区已存样本数 (0-9)
+volatile uint8_t  g_control_logic_flag = 0; // 10ms控制触发标志
+volatile uint8_t g_send_data_flag = 0; // 20ms发送触发标志
+volatile uint8_t ctrl_index = 0; 		// 用于指示当前是 20ms 里的第几次控制
+
+extern volatile uint32_t sys_ms_ticks;      // 全局毫秒时间戳
+extern volatile uint8_t g_mpu_read_ready; // 引入外部标志位
 //-----------------------------------------------
 // 外部变量声明
 //-----------------------------------------------
@@ -167,19 +163,23 @@ extern	u8  USART2_TX_BUF[USART_TRANS_LEN];     //发送缓冲,最大128个字节
 extern	u8  USART3_RX_BUF[USART_TRANS_LEN];     //接收缓冲,最大128个字节.
 extern	u8  USART3_TX_BUF[USART_TRANS_LEN];     //发送缓冲,最大128个字节.
 
-extern  u8  mpu_data_ready,UART1_RX_Flag;
+extern  u8  mpu_data_ready,UART1_RX_Flag,u8Uart2_flag;
+extern  u8  RxD2pt;
 
 extern int32_t recv_uart2_M1_val,recv_uart2_M2_val,recv_uart2_M3_val;
 
-extern u8 u8Uart2_flag;
+
 extern int32_t Target_Speed_M1,Target_Speed_M2,Target_Speed_M3;   // 设定的目标速度
 //-----------------------------------------------
 // 变量声明
 //-----------------------------------------------
+/* --- 系统状态变量  --- */
+static uint16_t global_packet_id = 0; // 仅在 main 使用，普通 static 即可
+
 int16_t gy_X,gy_Y,gy_Z;
 int16_t ac_X,ac_Y,ac_Z;
 
-float fpitch,froll,fyaw;
+float f_acc[3], f_gyro[3]; // 滤波变量
 
 u8 i,res,res1;
 
@@ -200,6 +200,13 @@ int main(void)
 { 
     Stm32_Clock_Init(336,8,2,7);//设置时钟,168Mhz
 	delay_init(168);			//初始化延时函数
+
+    // 1. 使能 Trace 单元 (必须先开启才能使用 DWT)
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    // 2. DWT 计数器清零
+    DWT->CYCCNT = 0;
+    // 3. 使能 DWT 周期计数器
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
     KEY_Init();
 	LED_Init();
@@ -287,85 +294,164 @@ int main(void)
 //******** 主循环程序 ***********//
 	while(1)
 	{
-        //LED_MA = !LED_MA;
-        //UART1ComReply();
-        // ============================
-        // 主循环：处理紧急任务
-        // ============================
+        // ==========================================================
+        // 任务 1：MPU6500 数据采集与缓冲管理 (原 EXTI0 逻辑)
+        // ==========================================================
+        if (g_mpu_read_ready) 
+        {
+            g_mpu_read_ready = 0;
+            // 1. 读取 MPU6500 原始数据 (1ms 一次)
+	        // 注意：此处读取必须足够快，建议使用硬件 I2C 或高速 SPI
+	        int16_t r_ax, r_ay, r_az, r_gx, r_gy, r_gz;
+	        MPU6500_Get_Gyroscope(&r_gx, &r_gy, &r_gz);
+	        MPU6500_Get_Accelerometer(&r_ax, &r_ay, &r_az);
+
+            // 2. 一阶低通滤波
+            f_acc[0] = LPF_ALPHA * r_ax + (1.0f - LPF_ALPHA) * f_acc[0];
+            f_acc[1] = LPF_ALPHA * r_ay + (1.0f - LPF_ALPHA) * f_acc[1];
+            f_acc[2] = LPF_ALPHA * r_az + (1.0f - LPF_ALPHA) * f_acc[2];
+            f_gyro[0] = LPF_ALPHA * r_gx + (1.0f - LPF_ALPHA) * f_gyro[0];
+            f_gyro[1] = LPF_ALPHA * r_gy + (1.0f - LPF_ALPHA) * f_gyro[1];
+            f_gyro[2] = LPF_ALPHA * r_gz + (1.0f - LPF_ALPHA) * f_gyro[2];
+
+            // 3. 压入当前双缓冲区
+            if (sample_in_buf_cnt < 20)
+            {
+                if (sample_in_buf_cnt == 0) 
+                {
+                    PingPongBuffer[write_index].base_timestamp = sys_ms_ticks;
+                }
+                RawSample_t *s = &PingPongBuffer[write_index].raw_data[sample_in_buf_cnt];
+                s->accel[0] = (int16_t)f_acc[0]; s->accel[1] = (int16_t)f_acc[1]; s->accel[2] = (int16_t)f_acc[2];
+                s->gyro[0]  = (int16_t)f_gyro[0]; s->gyro[1]  = (int16_t)f_gyro[1]; s->gyro[2]  = (int16_t)f_gyro[2];
+                
+                sample_in_buf_cnt++;
+            
+                // 3. 触发 10ms 控制逻辑 (100Hz)
+                if (sample_in_buf_cnt == 10) {
+                    ctrl_index = 0;           // 第一个 10ms 周期
+                    g_control_logic_flag = 1;
+                } 
+                else if (sample_in_buf_cnt == 20) {
+                    ctrl_index = 1;           // 第二个 10ms 周期
+                    g_control_logic_flag = 1;
+                    g_send_data_flag = 1;     // 同时触发 20ms 发送
+                }
+            } else {
+                // 【调试用】如果运行到这里，说明 while(1) 没能及时重置计数器
+                // 可以在这里点亮一个错误灯，代表系统实时性存在风险
+            }
+        }
+        // ==========================================================
+        // 任务 2：串口 2 指令解析 (#S+20000,-20000,+20000.)
+        // ==========================================================
 		// 检查是否有新指令
         if (u8Uart2_flag == 1)
         {
-			// 从串口2接收新指令
-			Target_Speed_M1 = recv_uart2_M1_val;//设定范围：-25000~25000
-            Target_Speed_M2 = recv_uart2_M2_val;
-            Target_Speed_M3 = recv_uart2_M3_val;
-            UART2ComReply();
-            // 清除标志位
-            u8Uart2_flag = 0;
-        }
-        // MPU data process
-        if(mpu_data_ready)
-		{
-			mpu_data_ready = 0;
-            //---- 读取 MPU6500 数据 ----
-            
-            //--- 准备数据 (单位转换) ---
-            // 假设 Gyro 灵敏度为 16.4 LSB/(deg/s) (即量程 2000)
-            // 必须转为 rad/s:  Raw / 16.4 * (PI / 180) ≈ Raw * 0.0010653
-            float gx = gy_X * 0.0010653f;
-            float gy = gy_Y * 0.0010653f;
-            float gz = gy_Z * 0.0010653f;
-            //--- 更新算法 ---
-            AHRS_Update(gx, gy, gz, ac_X, ac_Y, ac_Z, 0.001f);
-
-            // 5. 获取结果
-            AHRS_GetEulerAngle(&current_angle);    
-            
-            // 1. 定位当前使用的缓冲区指针
-            BatchPacket_t* p_buf = &PingPongBuffer[write_index];
-
-            // 2. 填充数据并打上时间戳
-            p_buf->samples[sample_in_buf_cnt].timestamp = sys_ms_ticks;
-            // ... 此处填充 MPU6500 数据和电机转速 ...
-            p_buf->samples[sample_in_buf_cnt].accel[0] = 0x01; 
-            p_buf->samples[sample_in_buf_cnt].accel[1] = 0x02; 
-            p_buf->samples[sample_in_buf_cnt].accel[2] = 0x03; 
-            p_buf->samples[sample_in_buf_cnt].gyro[0] = 0x11;
-            p_buf->samples[sample_in_buf_cnt].gyro[1] = 0x12;
-            p_buf->samples[sample_in_buf_cnt].gyro[2] = 0x13;
-            p_buf->samples[sample_in_buf_cnt].motor_spd[0] = 0x21;
-            p_buf->samples[sample_in_buf_cnt].motor_spd[1] = 0x22;
-            p_buf->samples[sample_in_buf_cnt].motor_spd[2] = 0x23;
-
-            sample_in_buf_cnt++;
-
-            // 3. 满 20 组数据 (20ms 周期到)
-            if(sample_in_buf_cnt >= 20)
+            // 1. 基本校验：确保包头和类型正确 (#S)
+            if (USART2_RX_BUF[0] == '#' && USART2_RX_BUF[1] == 'S')
             {
-                // 封装包头包尾
-                p_buf->head[0] = 0xAA; p_buf->head[1] = 0x55;
-                p_buf->tail[0] = 0x0D; p_buf->tail[1] = 0x0A;
+                // 2. 使用局部变量临时存储解析结果，防止中途出错影响电机运行
+                int32_t val1 = 0, val2 = 0, val3 = 0;
+                
+                // 3. 安全解析逻辑 (格式: #S+20000,-20000,+20000.)
+                // 解析 Motor 1
+                val1 = (USART2_RX_BUF[3]-'0')*10000 + (USART2_RX_BUF[4]-'0')*1000 + 
+                    (USART2_RX_BUF[5]-'0')*100   + (USART2_RX_BUF[6]-'0')*10 + (USART2_RX_BUF[7]-'0');
+                if(USART2_RX_BUF[2] == '-') val1 = -val1;
 
-                // 调试用：如果发送失败（DMA忙），翻转另一个 LED 报警 如果上电有问题，使用这段代码
-                if((DMA2_Stream7->CR & 0x01) == 0) 
-                {
-                    DMA_USART1_Start_TX_DoubleBuf((uint32_t)p_buf, sizeof(BatchPacket_t));
-                } else 
-                {
-                    // 如果进到这里，说明 460800 竟然还没发完，这绝对不正常
-                    // 可能是串口死锁了
-                    LED_MA = !LED_MA; // 让一个 LED 快速闪烁作为报警
-                }
-                //DMA_USART1_Start_TX_DoubleBuf((uint32_t)p_buf, sizeof(BatchPacket_t));
+                // 解析 Motor 2
+                val2 = (USART2_RX_BUF[10]-'0')*10000 + (USART2_RX_BUF[11]-'0')*1000 + 
+                    (USART2_RX_BUF[12]-'0')*100   + (USART2_RX_BUF[13]-'0')*10 + (USART2_RX_BUF[14]-'0');
+                if(USART2_RX_BUF[9] == '-') val2 = -val2;
 
-                // 5. 【关键】立即切换索引，下个 1ms 采样将写到另一个缓冲区
-                write_index = !write_index; 
-                sample_in_buf_cnt = 0;
+                // 解析 Motor 3
+                val3 = (USART2_RX_BUF[17]-'0')*10000 + (USART2_RX_BUF[18]-'0')*1000 + 
+                    (USART2_RX_BUF[19]-'0')*100   + (USART2_RX_BUF[20]-'0')*10 + (USART2_RX_BUF[21]-'0');
+                if(USART2_RX_BUF[16] == '-') val3 = -val3;
+
+                // 4. 范围限幅与生效
+                Target_Speed_M1 = (val1 > 25000) ? 25000 : ((val1 < -25000) ? -25000 : val1);
+                Target_Speed_M2 = (val2 > 25000) ? 25000 : ((val2 < -25000) ? -25000 : val2);
+                Target_Speed_M3 = (val3 > 25000) ? 25000 : ((val3 < -25000) ? -25000 : val3);
+                
+                UART2ComReply(); // 反馈解析成功
             }
-       }
-        // ============================
-        // 主循环：处理非紧急任务
-        // ============================
+            
+            // 5. 解析完成，清零标志位并重置指针
+            u8Uart2_flag = 0;
+            RxD2pt = 0; 
+        }
+        // ==========================================================
+        // 任务 3：姿态解算 (Mahony) 与 控制计算
+        // ==========================================================
+        // 获取当前正在处理的缓冲区指针
+        HybridPacket_t* p_buf = &PingPongBuffer[write_index];
+        // 1. 检查是否凑齐了 10ms 数据
+        if(g_control_logic_flag)
+        {
+            g_control_logic_flag = 0;
+            uint32_t start_cycles = DWT->CYCCNT; 
+
+            // 执行姿态解算 (Mahony)
+            // --- 1. 高频姿态更新循环 ---
+            // 根据 ctrl_index 确定读取 raw_data 的起始位置
+            // ctrl_index=0 -> offset=0, 读取 0-9ms 数据
+            // ctrl_index=1 -> offset=10, 读取 10-19ms 数据
+            int offset = ctrl_index * 10;
+
+            // 虽然我们在 10ms 的逻辑里，但我们要把过去 10ms 的轨迹“补”回来
+            for(int i = 0; i < 10; i++) 
+            {
+                // 提取对应毫秒的数据 (注意 i + offset)
+                float gx = p_buf->raw_data[i + offset].gyro[0] * 0.0010653f;
+                float gy = p_buf->raw_data[i + offset].gyro[1] * 0.0010653f;
+                float gz = p_buf->raw_data[i + offset].gyro[2] * 0.0010653f;
+                float ax = p_buf->raw_data[i + offset].accel[0];
+                float ay = p_buf->raw_data[i + offset].accel[1];
+                float az = p_buf->raw_data[i + offset].accel[2];
+            
+                // 核心：调用 10 次更新，每次 dt 必须是 0.001f (1ms)
+                // 这样 AHRS 内部的四元数或旋转矩阵是连续积分的
+                AHRS_Update(gx, gy, gz, ax, ay, az, 0.001f); 
+            }
+
+            // --- 2. 此时获取的欧拉角是融合了 10 组数据后的最新姿态 ---
+            AHRS_GetEulerAngle(&current_angle);
+
+            // --- 3. 执行一次控制计算 (PID/LQR) ---
+            // 控制不需要 1ms 一次，因为电机的物理响应没那么快
+            //BallBot_Control_Calculate(current_angle);
+
+            // 3. 填充控制量到当前正在写入的缓冲区
+            p_buf->ctrl_info[ctrl_index].euler[0] = current_angle.roll;
+            p_buf->ctrl_info[ctrl_index].euler[1] = current_angle.pitch;
+            p_buf->ctrl_info[ctrl_index].euler[2] = current_angle.yaw;
+            
+            p_buf->ctrl_info[ctrl_index].motor_out[0] = Target_Speed_M1;
+            p_buf->ctrl_info[ctrl_index].motor_out[1] = Target_Speed_M2;
+            p_buf->ctrl_info[ctrl_index].motor_out[2] = Target_Speed_M3;
+
+            // --- 5. 统计耗时并提交发送 ---
+            // 耗时计算 (us): (结束周期 - 开始周期) / (主频MHz)
+            p_buf->ctrl_info[ctrl_index].ctrl_dt = (DWT->CYCCNT - start_cycles) / 168;
+
+        }
+        // ==========================================================
+        // 任务 4：数据外发 (DMA 提交)
+        // ==========================================================
+        if (g_send_data_flag) 
+        {
+            g_send_data_flag = 0;
+         
+            p_buf->packet_id = global_packet_id++;
+
+            // 切换缓冲区、重置计数器、触发 DMA
+            DMA_Submit_And_Switch_Buffer(); 
+        }
+        // ==========================================================
+        // 任务 5：低频任务 (OLED 刷新等)
+        // ==========================================================
         // 每 100ms 刷新一次屏幕 (1ms * 100 = 100ms)
         if (oled_tick >= 50)
         {
@@ -374,8 +460,6 @@ int main(void)
             OLED_Refresh();
             //UART2ComReply();
         }
-        //UART1ComReply();
-        //UART2ComReply();
 	}
 }
 //------------------------------------------------------
@@ -447,7 +531,76 @@ void OLED_Refresh(void)
 
     OLED_Refresh_Gram();
 }
+//------------------------------------------------
+// 裸机环境下的双缓冲切换与提交函数
+//------------------------------------------------
+uint8_t DMA_Submit_And_Switch_Buffer(void) 
+{
+    uint8_t last_write_index;
 
+    // --- 进入临界区：关闭全局中断，防止 EXTI 中断在此期间修改指针 ---
+    __disable_irq(); 
+
+    last_write_index = write_index; // 记录刚刚写满的索引
+    write_index = !write_index;     // 切换到另一个缓冲区
+    sample_in_buf_cnt = 0;          // 重置采样计数器
+
+    // --- 退出临界区：恢复全局中断 ---
+    __enable_irq(); 
+
+    // 触发异步 DMA 发送
+    // 确保 DMA 当前空闲
+    if((DMA2_Stream7->CR & 0x01) == 0) 
+    {
+        DMA_USART1_Start_TX_DoubleBuf((uint32_t)&PingPongBuffer[last_write_index], sizeof(HybridPacket_t));
+    }
+
+    // 立刻把下一轮要写的这一桶 (新 write_index) 填满无效值
+    // 这样接下来的 20ms 内，没收到的 CAN 报文位就会保持 NAN
+    Buffer_Clear_And_Init(&PingPongBuffer[write_index]);
+
+    return last_write_index;
+}
+//--------------------------------------------------------
+// @brief 将指定的缓冲区初始化为无效状态
+// @param buf 指向需要清理的结构体指针
+//--------------------------------------------------------
+void Buffer_Clear_And_Init(HybridPacket_t *buf) 
+{
+    //清理即将使用的缓冲区
+    // 使用 memset 将整个结构体清零。这会清除旧的 raw_data 和 motor_data
+    // sizeof(HybridPacket_t) 约为 379 字节，F407 跑 memset 极快（< 1us）
+    memset(buf, 0, sizeof(HybridPacket_t));
+
+    // 填充固定协议头尾 (提前填好，发包时就不用管了)
+    buf->head[0] = 0xAA;
+    buf->head[1] = 0x55;
+    buf->type = 0x01;       //前期不区分快慢帧，统一20ms间隔发送
+    buf->tail[0] = 0x0D;
+    buf->tail[1] = 0x0A;
+
+    // 3. 填充浮点数无效值 (使用 NAN)
+    // 传感器原始数据通常是 int16，直接清零即可，但电机角度是 float
+    for (int t = 0; t < 4; t++) {
+        for (int m = 0; m < 3; m++) {
+            buf->motor_data[t][m].angle = 0xFFFF;    // 设为无效状态码
+            buf->motor_data[t][m].status = 0xFFFF;  // 设为无效状态码
+        }
+    }
+
+    // 4. 填充控制数据无效值
+    for (int i = 0; i < 2; i++) {
+        buf->ctrl_info[i].euler[0] = NAN;
+        buf->ctrl_info[i].euler[1] = NAN;
+        buf->ctrl_info[i].euler[2] = NAN;
+        buf->ctrl_info[i].ctrl_dt  = 0; // 耗时清零
+    }
+}
+//===========================================================================
+//
+//  FreeRtos function
+//
+//===========================================================================
 void vApplicationIdleHook(void)
 {
 }

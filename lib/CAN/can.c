@@ -3,9 +3,16 @@
 #include "delay.h"
 #include "usart.h"
 #include "timer.h"
+#include "exti.h"
 //---------------------------------------------------------------
 // 变量定义
 //--------------------------------------------------------------
+//外部变量
+extern volatile uint8_t write_index;       // 当前正在写入的 Ping-Pong 缓冲区索引
+extern volatile uint8_t sample_in_buf_cnt; // 1ms 计数器 (0-19)
+extern HybridPacket_t PingPongBuffer[2];   // 双缓冲区
+
+//-------------
 u16 CAN_TX_Count = 0;
 //////////////////////////////////////////////////////////////////////////////////	 
 //					  
@@ -82,70 +89,57 @@ u8 CAN1_Mode_Init()
 
  	//使用中断接收
 	CAN1->IER|=1<<1;		//FIFO0消息挂号中断允许.	    
-	MY_NVIC_Init(1,0,CAN1_RX0_IRQn,2);//组2
+	MY_NVIC_Init(0,1,CAN1_RX0_IRQn,2);//组2
 
 	return 0;
 }   
 //中断服务函数			    
 void CAN1_RX0_IRQHandler(void)
 {
-    // 1. 判断 FIFO0 是否真的有数据 (FMP0 位不为0)
-    // RF0R 的低2位表示 FIFO 中的消息数量
-    if ((CAN1->RF0R & CAN_RF0R_FMP0) != 0) 
+    // 1. 直接读取寄存器快照，减少外设总线访问次数
+    // 硬件寄存器访问比内存慢，读一次存入局部变量是最高效的
+    uint32_t rir = CAN1->sFIFOMailBox[0].RIR;
+    
+    // 2. 快速检查：必须是标准帧且非远程帧
+    // 使用位掩码一次性判断多个条件 (IDE=0 且 RTR=0)
+    if ((rir & (CAN_RI0R_IDE | CAN_RI0R_RTR)) == 0)
     {
-        uint32_t rx_id;
-        int32_t rx_AS5600_val;
-        int32_t rx_state;
-        uint32_t current_time;
-        
-        // 获取标准帧 ID
-        // RIR 寄存器的 [31:21] 位是标准 ID (STID)
-        // [2] 是 IDE (扩展帧标志), [1] 是 RTR (远程帧标志)
-        // 我们只看标准 ID，所以右移 21 位
-        rx_id = (CAN1->sFIFOMailBox[0].RIR >> 21) & 0x7FF;
+        uint32_t rx_id = (rir >> 21); // 提取 ID
+        uint32_t m_idx = rx_id - CAN_ID_RX_M1; // 偏移计算索引
 
-        // 检查是否为标准数据帧 (可选)
-        if (((CAN1->sFIFOMailBox[0].RIR & CAN_RI0R_RTR) == 0) && 
-            ((CAN1->sFIFOMailBox[0].RIR & CAN_RI0R_IDE) == 0))
+        // 3. 边界检查：只处理 M1, M2, M3
+        if (m_idx < 3) 
         {
-            // 记录当前系统时间戳
-            current_time = Get_System_Tick();
-            //读取数据
-            rx_AS5600_val     = (int32_t)(CAN1->sFIFOMailBox[0].RDLR);
-            rx_state = (int32_t)(CAN1->sFIFOMailBox[0].RDHR);
+            // 缓存 1ms 计数器快照，防止读取过程中 sample_in_buf_cnt 被 1ms 中断修改
+            uint32_t current_cnt = sample_in_buf_cnt;
+            uint32_t slot = current_cnt / 5;
+            if (slot > 3) slot = 3;
 
-            // 5. 根据 ID 存入数组
-            switch (rx_id)
-            {
-                case CAN_ID_RX_M1: // 收到 0x101 -> 存入 Motor[0]
-                Motors[0].AS5600_val = rx_AS5600_val;
-                Motors[0].status = rx_state;
-                Motors[0].last_tick = current_time;
-                break;
-            
-				case CAN_ID_RX_M2: // 收到 0x102 -> 存入 Motor[1]
-					Motors[1].AS5600_val = rx_AS5600_val;
-					Motors[1].status = rx_state;
-					Motors[1].last_tick = current_time;
-					break;
-				
-				case CAN_ID_RX_M3: // 收到 0x103 -> 存入 Motor[2]
-					Motors[2].AS5600_val = rx_AS5600_val;
-					Motors[2].status = rx_state;
-					Motors[2].last_tick = current_time;
-					break;
-				
-				default:
-					break;
-            }
+            // 4. 一次性读取数据寄存器
+            uint32_t rdlr = CAN1->sFIFOMailBox[0].RDLR; // 编码器值
+            uint32_t rdhr = CAN1->sFIFOMailBox[0].RDHR; // 状态值
+
+            // 5. 指针偏移优化：直接定位到目标内存地址
+            // 这种写法能让编译器生成最简练的汇编代码
+            volatile Motor_Feedback_t *m_local = &Motors[m_idx];
+            MotorFeedback_t *m_tele = &PingPongBuffer[write_index].motor_data[slot][m_idx];
+
+            // 更新本地控制变量
+            m_local->AS5600_val = (int32_t)rdlr;
+            m_local->status     = (uint16_t)rdhr;
+            m_local->last_tick  = Get_System_Tick(); // 使用全局毫秒计数器
+
+            // 更新上位机上传变量 (使用精确的 float 常量)
+            // 360/4096 = 0.087890625f
+            m_tele->angle  = (float)((int32_t)rdlr) * 0.087890625f;
+            m_tele->status = (uint16_t)rdhr;
         }
-
+    }
         // --- 释放邮箱 (至关重要) ---
         
         // 6. 释放 FIFO0 输出邮箱 (RFOM0 置 1)
         // 如果不执行这步，FIFO 满了之后就再也收不到新数据了
         CAN1->RF0R |= CAN_RF0R_RFOM0; 
-    }
 }
 //--------------------------------------------------------------------------
 // 功能: 向指定ID的电机发送数据

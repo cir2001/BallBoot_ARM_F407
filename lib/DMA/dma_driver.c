@@ -52,8 +52,11 @@ void DMA_Config_USART1(void)
 
     // 2.4 配置控制寄存器 CR
     // Ch4(100), Mem2Periph(01), Normal(0), Minc(1), Pinc(0), PriorityHigh(10)
-    // 注意：这里不开启 EN，等到要发送时才开
-    DMA2_Stream7->CR = (4U << 25) | (1U << 6) | (1U << 10) | (2U << 16);
+    // 注意：这里不开启 EN，等到要发送时才开 增加 (1U << 4) 代表使能传输完成中断 (TCIE)
+    DMA2_Stream7->CR = (4U << 25) | (1U << 6) | (1U << 10) | (2U << 16) | (1U << 4);
+
+    // USART1 TX (Stream 7) 优先级：抢占 1, 响应 1 (略低于接收)
+    MY_NVIC_Init(1, 1, DMA2_Stream7_IRQn, 2);
 }
 //------------------------------------------------
 //
@@ -61,7 +64,7 @@ void DMA_Config_USART1(void)
 uint8_t DMA_USART1_Start_TX_DoubleBuf(uint32_t buffer_addr, uint16_t len)
 {
     // 1. 检查 DMA 是否忙碌 (EN位)
-    // 如果上一次 20ms 的数据还没发完，说明波特率太低或数据量太大
+    // 如果上一次  的数据还没发完，说明波特率太低或数据量太大
     if ((DMA2_Stream7->CR & (1 << 0)) != 0) 
     {
         return 1; 
@@ -90,6 +93,27 @@ uint32_t DMA_Get_RX_Current_Pos(void)
 {
     // NDTR 是倒计数的，所以用 总大小 - 剩余大小 = 当前位置
     return DMA_RX_BUFFER_SIZE - DMA2_Stream2->NDTR;
+}
+//------------------------------------------------
+//
+//------------------------------------------------
+void DMA2_Stream7_IRQHandler(void)
+{
+    // 1. 检查是否是传输完成中断 (TCIF7)
+    if (DMA2->HISR & (1 << 27)) 
+    {
+        DMA2->HIFCR |= (1 << 27); // 清除 TCIF7
+        
+        // 你的逻辑: 比如设置发送完成标志位
+    }
+    
+    // 2. 建议增加：检查并清除传输错误标志 (TEIF7)
+    // HISR 的第 25 位是 Stream7 的传输错误标志
+    if (DMA2->HISR & (1 << 25))
+    {
+        DMA2->HIFCR |= (1 << 25); // 清除 TEIF7
+        // 调试用：可以在这里点亮一个红灯
+    }
 }
 //==============================================================================
 // USART2 相关的 DMA 配置函数
