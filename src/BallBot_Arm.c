@@ -326,7 +326,7 @@ int main(void)
                     PingPongBuffer[write_index].base_timestamp = sys_ms_ticks;
                 }
                 RawSample_t *s = &PingPongBuffer[write_index].raw_data[sample_in_buf_cnt];
-                //s->accel[0] = (int16_t)f_acc[0]; s->accel[1] = (int16_t)f_acc[1]; s->accel[2] = (int16_t)f_acc[2];
+                s->accel[0] = (int16_t)f_acc[0]; s->accel[1] = (int16_t)f_acc[1]; s->accel[2] = (int16_t)f_acc[2];
                 s->gyro[0]  = (int16_t)f_gyro[0]; s->gyro[1]  = (int16_t)f_gyro[1]; s->gyro[2]  = (int16_t)f_gyro[2];
                 
                 sample_in_buf_cnt++;
@@ -411,14 +411,14 @@ int main(void)
                 float gx = p_buf->raw_data[i + offset].gyro[0] * 0.0010653f;
                 float gy = p_buf->raw_data[i + offset].gyro[1] * 0.0010653f;
                 float gz = p_buf->raw_data[i + offset].gyro[2] * 0.0010653f;
-                //float ax = p_buf->raw_data[i + offset].accel[0];
-                //float ay = p_buf->raw_data[i + offset].accel[1];
-                //float az = p_buf->raw_data[i + offset].accel[2];
+                float ax = p_buf->raw_data[i + offset].accel[0];
+                float ay = p_buf->raw_data[i + offset].accel[1];
+                float az = p_buf->raw_data[i + offset].accel[2];
             
                 // 核心：调用 10 次更新，每次 dt 必须是 0.001f (1ms)
                 // 这样 AHRS 内部的四元数或旋转矩阵是连续积分的
-                //AHRS_Update(gx, gy, gz, ax, ay, az, 0.001f); 
-                AHRS_Update(gx, gy, gz, 0, 0, 0, 0.001f); 
+                AHRS_Update(gx, gy, gz, ax, ay, az, 0.001f); 
+                //AHRS_Update(gx, gy, gz, 0, 0, 0, 0.001f); 
             }
 
             // --- 2. 此时获取的欧拉角是融合了 10 组数据后的最新姿态 ---

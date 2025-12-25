@@ -1,6 +1,7 @@
 #include "dma_driver.h"
 #include <stdio.h> 
 #include <string.h> 
+#include "exti.h"
 //=============================================
 #define DMA_TX_BUFFER_SIZE  128  // 发送缓冲区大小
 #define DMA_RX_BUFFER_SIZE  256  // 接收缓冲区大小 (建议2的幂次方)
@@ -10,6 +11,9 @@
 uint8_t dma_tx_buffer[DMA_TX_BUFFER_SIZE];
 uint8_t dma_rx_buffer[DMA_RX_BUFFER_SIZE];
 volatile uint32_t DMA_Busy_Drop_Count = 0;
+
+PID_Params_t Balance_PID = {10.0f, 0.0f, 0.5f};
+PID_Params_t Velocity_PID = {1.0f, 0.1f, 0.0f};
 //==============================================================================
 // USART1 相关的 DMA 配置函数
 //============================================================================== 
@@ -96,7 +100,7 @@ uint32_t DMA_Get_RX_Current_Pos(void)
     return DMA_RX_BUFFER_SIZE - DMA2_Stream2->NDTR;
 }
 //------------------------------------------------
-//
+// usart1 发送
 //------------------------------------------------
 void DMA2_Stream7_IRQHandler(void)
 {
@@ -116,43 +120,59 @@ void DMA2_Stream7_IRQHandler(void)
         // 调试用：可以在这里点亮一个红灯
     }
 }
-//==============================================================================
-// USART2 相关的 DMA 配置函数
-//============================================================================== 
-/*void DMA_Config_USART2(void)
-{
-    // 1. 【关键】开启 DMA1 时钟 (注意是 DMA1)
-    RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
+//-------------------------------------------------------------------------------
+// USART1 接收配置
+//  DMA2_Stream5
+//-------------------------------------------------------------------------------
+void USART1_DMA_Rx_Config(void) {
+    // 1. 使能 DMA2 时钟
+    RCC->AHB1ENR |= (1 << 22); 
 
-    // --- TX 配置: DMA1 Stream6 Channel4 ---
+    // 2. 配置 DMA2_Stream5 (USART1_RX)
+    DMA2_Stream5->CR = 0; // 先清零
+    while(DMA2_Stream5->CR & (1 << 0)); // 等待开启位清零
+
+    DMA2_Stream5->PAR = (uint32_t)&(USART1->DR);    // 外设地址：USART1 数据寄存器
+    DMA2_Stream5->M0AR = (uint32_t)dma_rx_buffer;       // 内存地址：自定义缓冲区
+    DMA2_Stream5->NDTR = DMA_RX_BUFFER_SIZE;               // 接收数据长度
     
-    // 2.1 确保 Stream 关闭
-    DMA1_Stream6->CR &= ~DMA_SxCR_EN;
-    while(DMA1_Stream6->CR & DMA_SxCR_EN);
-
-    // 2.2 清除 Stream6 所有中断标志
-    // Stream6 在 HIFCR (High Interrupt Flag Clear Register)
-    // 对应的位通常是 [21:16] 附近的区域，建议全清
-    // Stream6 对应 TCIF6, HTIF6 等，位于 HIFCR 的 Bit 21, 20, 19, 18, 16
-    DMA1->HIFCR |= (0x3F << 16); 
-
-    // 2.3 设置外设地址 -> USART2 的数据寄存器
-    DMA1_Stream6->PAR = (uint32_t)&(USART2->DR);
-
-    // 2.4 设置内存地址 (缓冲区)
-    DMA1_Stream6->M0AR = (uint32_t)dma_tx_buffer;
-
-    // 2.5 配置控制寄存器 CR
-    // Channel 4 (100) -> 查表得 DMA1 Stream6 Ch4 是 USART2_TX
-    // Dir Mem2Periph (01)
-    // Minc Enable (1)
-    // PINC Disable (0)
-    // Priority High (10)
-    DMA1_Stream6->CR = (4U << 25) | (1U << 6) | (1U << 10) | (2U << 16);
+    // CR 配置：通道4, 优先级中, 内存递增, 外设不递增, 内存单次模式(或循环模式)
+    DMA2_Stream5->CR |= (4 << 25);  // Channel 4
+    DMA2_Stream5->CR |= (1 << 10);  // MINC: 内存地址递增
+    DMA2_Stream5->CR &= ~(1 << 6);  // DIR: 00 代表外设到内存
     
-    // 注意：此时不开启 EN，等发送函数来开
-}*/
+    DMA2_Stream5->CR |= (1 << 0);   // 使能 DMA Stream
 
+    // 3. 配置 USART1
+    USART1->CR3 |= (1 << 6);        // DMAR: 使能串口 DMA 接收
+    USART1->CR1 |= (1 << 4);        // IDLEIE: 使能空闲中断
+}
+//=========================================================
+//		 USART1 中断服务程序  DMA方式		  
+//=========================================================
+void USART1_IRQHandler(void) {
+    if (USART1->SR & (1 << 4)) { // 监测到 IDLE
+        uint8_t temp = (uint8_t)(USART1->SR);
+        temp = (uint8_t)(USART1->DR);
+        (void)temp;
 
+        DMA2_Stream5->CR &= ~(1 << 0); // 关闭 DMA
+        
+        // 修正后的 rx_len 计算
+        uint16_t rx_len = DMA_RX_BUFFER_SIZE - (uint16_t)(DMA2_Stream5->NDTR);
+
+        if (rx_len >= sizeof(CommandPacket_t)) {
+            for (int i = 0; i <= rx_len - sizeof(CommandPacket_t); i++) {
+                if (dma_rx_buffer[i] == 0xAA && dma_rx_buffer[i+1] == 0x55) {
+                    //ParseCommandPacket((CommandPacket_t*)&dma_rx_buffer[i]); //
+                    break;
+                }
+            }
+        }
+
+        DMA2_Stream5->NDTR = DMA_RX_BUFFER_SIZE; // 重置计数器
+        DMA2_Stream5->CR |= (1 << 0);    // 重新开启 DMA
+    }
+}
 
 

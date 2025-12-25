@@ -11,8 +11,6 @@
 // ============================================================================== */
 // 初始化 USART1 相关的 DMA (TX: Stream7, RX: Stream2) */
 void DMA_Config_USART1(void);
-// 初始化 USART2 相关的 DMA (TX: Stream6, RX: Stream2) */
-void DMA_Config_USART2(void);
 
 /**
  * @brief 启动 USART1 DMA 发送指定地址的数据
@@ -21,6 +19,14 @@ void DMA_Config_USART2(void);
  * @return 0: 成功, 1: DMA 忙碌
  */
 uint8_t DMA_USART1_Start_TX_DoubleBuf(uint32_t buffer_addr, uint16_t len);
+
+// 全局变量存放当前的 PID 参数
+typedef struct {
+    float kp;
+    float ki;
+    float kd;
+} PID_Params_t;
+
 
 
 #endif /* __DMA_DRIVER_H */

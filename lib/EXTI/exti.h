@@ -19,7 +19,7 @@ typedef struct
 // 1ms 原始采样数据点
 typedef struct 
 {
-    //int16_t accel[3];
+    int16_t accel[3];
     int16_t gyro[3];
 } RawSample_t; // 12 bytes
 
@@ -42,6 +42,18 @@ typedef struct      // 降低带宽的占用，每20ms发送一次
     MotorFeedback_t motor_data[4][3];   // 4个时间槽, 3个电机  F103 5ms发送间隔
     uint8_t         tail[2];            // 0x0D 0x0A
 } HybridPacket_t;
+
+//接收QT发送的指令
+typedef struct {
+    uint8_t  head[2];      // 0xAA, 0x55
+    uint8_t  type;         // 0x01: PID, 0x02: Mode
+    uint8_t  loop_type;    // 0: 平衡, 1: 速度
+    float    p;
+    float    i;
+    float    d;
+    uint8_t  tail[2];      // 0x0D, 0x0A
+} CommandPacket_t;
+
 #pragma pack()// 恢复默认对齐方式
 
 void EXTIX_Init(void);	//外部中断初始化		 					    
