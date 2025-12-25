@@ -12,14 +12,14 @@
 #pragma pack(1)// 必须加在结构体定义最前面
 typedef struct 
 {
-    uint16_t angle;      
+    float angle;      
     uint16_t status;     
 } MotorFeedback_t;
 
 // 1ms 原始采样数据点
 typedef struct 
 {
-    int16_t accel[3];
+    //int16_t accel[3];
     int16_t gyro[3];
 } RawSample_t; // 12 bytes
 

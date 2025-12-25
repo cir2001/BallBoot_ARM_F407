@@ -139,9 +139,11 @@
 //**************************************************
 void Task1(void *pvParameters);
 void Task2(void *pvParameters);
-void OLED_Refresh(void);
+void OLED_Refresh_Sliced(void);
 uint8_t DMA_Submit_And_Switch_Buffer(void);
 void Buffer_Clear_And_Init(HybridPacket_t *buf);
+int fast_itoa(int32_t val, char* buf, uint8_t width, char pad);
+
 
 // 定义两个缓冲区：Ping 和 Pong
 HybridPacket_t PingPongBuffer[2]; 
@@ -153,6 +155,8 @@ volatile uint8_t ctrl_index = 0; 		// 用于指示当前是 20ms 里的第几次
 
 extern volatile uint32_t sys_ms_ticks;      // 全局毫秒时间戳
 extern volatile uint8_t g_mpu_read_ready; // 引入外部标志位
+
+extern volatile uint32_t DMA_Busy_Drop_Count;
 //-----------------------------------------------
 // 外部变量声明
 //-----------------------------------------------
@@ -322,7 +326,7 @@ int main(void)
                     PingPongBuffer[write_index].base_timestamp = sys_ms_ticks;
                 }
                 RawSample_t *s = &PingPongBuffer[write_index].raw_data[sample_in_buf_cnt];
-                s->accel[0] = (int16_t)f_acc[0]; s->accel[1] = (int16_t)f_acc[1]; s->accel[2] = (int16_t)f_acc[2];
+                //s->accel[0] = (int16_t)f_acc[0]; s->accel[1] = (int16_t)f_acc[1]; s->accel[2] = (int16_t)f_acc[2];
                 s->gyro[0]  = (int16_t)f_gyro[0]; s->gyro[1]  = (int16_t)f_gyro[1]; s->gyro[2]  = (int16_t)f_gyro[2];
                 
                 sample_in_buf_cnt++;
@@ -407,13 +411,14 @@ int main(void)
                 float gx = p_buf->raw_data[i + offset].gyro[0] * 0.0010653f;
                 float gy = p_buf->raw_data[i + offset].gyro[1] * 0.0010653f;
                 float gz = p_buf->raw_data[i + offset].gyro[2] * 0.0010653f;
-                float ax = p_buf->raw_data[i + offset].accel[0];
-                float ay = p_buf->raw_data[i + offset].accel[1];
-                float az = p_buf->raw_data[i + offset].accel[2];
+                //float ax = p_buf->raw_data[i + offset].accel[0];
+                //float ay = p_buf->raw_data[i + offset].accel[1];
+                //float az = p_buf->raw_data[i + offset].accel[2];
             
                 // 核心：调用 10 次更新，每次 dt 必须是 0.001f (1ms)
                 // 这样 AHRS 内部的四元数或旋转矩阵是连续积分的
-                AHRS_Update(gx, gy, gz, ax, ay, az, 0.001f); 
+                //AHRS_Update(gx, gy, gz, ax, ay, az, 0.001f); 
+                AHRS_Update(gx, gy, gz, 0, 0, 0, 0.001f); 
             }
 
             // --- 2. 此时获取的欧拉角是融合了 10 组数据后的最新姿态 ---
@@ -453,83 +458,107 @@ int main(void)
         // 任务 5：低频任务 (OLED 刷新等)
         // ==========================================================
         // 每 100ms 刷新一次屏幕 (1ms * 100 = 100ms)
-        if (oled_tick >= 50)
+        if (oled_tick >= 10)
         {
             oled_tick = 0;
             //LED_MA = !LED_MA;
-            OLED_Refresh();
+            OLED_Refresh_Sliced(); // 时间切片  降低刷新过程cpu的负载
             //UART2ComReply();
         }
 	}
 }
-//------------------------------------------------------
-// OLED 主界面刷新
-//------------------------------------------------------
-void OLED_Refresh(void)
+//---------------------------------------------------------------------
+// @brief 分步刷新 OLED 界面 (状态机模式)
+// @note 建议每 10ms-20ms 调用一次，完成一次全屏刷新需要 4 次调用
+//--------------------------------------------------------------------
+void OLED_Refresh_Sliced(void)
 {
-    char buf[20]; 
-    uint32_t current_time = Get_System_Tick();
-    // --- 第一行 (Y=16) ---
-    sprintf(buf, "%6ld %5ld", Target_Speed_M1, Motors[0].AS5600_val);
-    OLED_ShowString(0, 16, (u8*)buf, 16);
-    // 1. 判断物理层是否掉线 (超时检测)
-    // 如果当前时间比上次收到回包的时间大 100ms
-    if (current_time - Motors[0].last_tick > 20) //100ms timer2 5ms 
+    static uint8_t refresh_step = 0;
+    char display_buf[24]; 
+    char* p = display_buf;
+    int32_t target_speeds[3] = {Target_Speed_M1, Target_Speed_M2, Target_Speed_M3};
+    //int32_t target_speeds[3] = {DMA_Busy_Drop_Count, DMA_Busy_Drop_Count, DMA_Busy_Drop_Count};
+
+
+    switch (refresh_step) 
     {
-        OLED_ShowString(104, 16, (u8*)"OFF", 16); 
-    }
-    // 2. 判断协议层是否报错 (F103 发来的心跳保护位)
-    else if (Motors[0].status & 0x80) 
-    {
-        OLED_ShowString(104, 16, (u8*)"ERR", 16); 
-    }
-    // 3. 正常运行
-    else 
-    {
-        OLED_ShowString(104, 16, (u8*)" OK", 16); 
+        case 0: 
+        case 1: 
+        case 2: 
+        {
+            uint8_t i = refresh_step;
+            
+            // 使用 fast_itoa 替换 sprintf
+            // 渲染目标速度，宽度 6，空格填充
+            p += fast_itoa(target_speeds[i], p, 6, ' ');
+            *p++ = ' '; // 分隔符
+            // 渲染编码器值，宽度 5，空格填充
+            fast_itoa(Motors[i].AS5600_val, p, 5, ' ');
+
+            OLED_ShowString(0, 16 + (i * 16), (u8*)display_buf, 16);
+
+            // 状态逻辑判定保持不变...
+            const char* status_str = (Get_System_Tick() - Motors[i].last_tick > 20) ? "OFF" : 
+                                    (Motors[i].status & 0x80 ? "ERR" : " OK");
+            
+            OLED_ShowString(104, 16 + (i * 16), (u8*)status_str, 16);
+            break;
+        }
+        case 3: 
+            OLED_Refresh_Gram(); 
+            break;
     }
 
-    // --- 第二行 (Y=32) ---
-    sprintf(buf, "%6ld %5ld", Target_Speed_M2, Motors[1].AS5600_val);
-    OLED_ShowString(0, 32, (u8*)buf, 16);
-    // 1. 判断物理层是否掉线 (超时检测)
-    // 如果当前时间比上次收到回包的时间大 100ms
-    if (current_time - Motors[1].last_tick > 20) //100ms timer2 5ms 
-    {
-        OLED_ShowString(104, 32, (u8*)"OFF", 16); 
-    }
-    // 2. 判断协议层是否报错 (F103 发来的心跳保护位)
-    else if (Motors[1].status & 0x80) 
-    {
-        OLED_ShowString(104, 32, (u8*)"ERR", 16); 
-    }
-    // 3. 正常运行
-    else 
-    {
-        OLED_ShowString(104, 32, (u8*)" OK", 16); 
+    if (++refresh_step >= 4) refresh_step = 0;
+}
+//--------------------------------------------------------
+//@brief 极简整数转字符串 (支持负数和固定宽度填充)
+//@param val: 待转换的 32 位整数
+//@param buf: 目标缓冲区
+//@param width: 最小显示宽度 (0 表示不填充)
+//@param pad: 填充字符 (通常为 ' ' 或 '0')
+//@return 返回生成的字符串长度
+//-----------------------------------------------------------
+int fast_itoa(int32_t val, char* buf, uint8_t width, char pad) {
+    char temp[12];
+    uint8_t i = 0, j = 0;
+    uint32_t abs_val;
+    uint8_t negative = 0;
+
+    // 1. 处理负数
+    if (val < 0) {
+        negative = 1;
+        abs_val = -val;
+    } else {
+        abs_val = val;
     }
 
-    // --- 第三行 (Y=48) ---
-    sprintf(buf, "%6ld %5ld", Target_Speed_M3, Motors[2].AS5600_val);
-    OLED_ShowString(0, 48, (u8*)buf, 16);
-    // 1. 判断物理层是否掉线 (超时检测)
-    // 如果当前时间比上次收到回包的时间大 100ms
-    if (current_time - Motors[2].last_tick > 20) //100ms timer2 5ms 
-    {
-        OLED_ShowString(104, 48, (u8*)"OFF", 16); 
-    }
-    // 2. 判断协议层是否报错 (F103 发来的心跳保护位)
-    else if (Motors[2].status & 0x80) 
-    {
-        OLED_ShowString(104, 48, (u8*)"ERR", 16); 
-    }
-    // 3. 正常运行
-    else 
-    {
-        OLED_ShowString(104, 48, (u8*)" OK", 16); 
+    // 2. 逐位取余 (逆序)
+    if (abs_val == 0) {
+        temp[i++] = '0';
+    } else {
+        while (abs_val > 0) {
+            temp[i++] = (abs_val % 10) + '0';
+            abs_val /= 10;
+        }
     }
 
-    OLED_Refresh_Gram();
+    // 3. 计算符号和填充
+    uint8_t actual_width = i + negative;
+    while (actual_width < width) {
+        buf[j++] = pad;
+        actual_width++;
+    }
+
+    if (negative) buf[j++] = '-';
+
+    // 4. 逆序拷贝到输出缓冲区
+    while (i > 0) {
+        buf[j++] = temp[--i];
+    }
+
+    buf[j] = '\0'; // 结束符
+    return j;
 }
 //------------------------------------------------
 // 裸机环境下的双缓冲切换与提交函数
@@ -583,7 +612,7 @@ void Buffer_Clear_And_Init(HybridPacket_t *buf)
     // 传感器原始数据通常是 int16，直接清零即可，但电机角度是 float
     for (int t = 0; t < 4; t++) {
         for (int m = 0; m < 3; m++) {
-            buf->motor_data[t][m].angle = 0xFFFF;    // 设为无效状态码
+            buf->motor_data[t][m].angle = NAN;    // 设为无效状态码
             buf->motor_data[t][m].status = 0xFFFF;  // 设为无效状态码
         }
     }
@@ -642,3 +671,6 @@ while (1)
 	vTaskDelay(pdMS_TO_TICKS(1000)); // 延时1000ms
 }
 }
+
+
+

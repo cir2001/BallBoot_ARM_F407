@@ -9,7 +9,7 @@
 //==============================================================================
 uint8_t dma_tx_buffer[DMA_TX_BUFFER_SIZE];
 uint8_t dma_rx_buffer[DMA_RX_BUFFER_SIZE];
-
+volatile uint32_t DMA_Busy_Drop_Count = 0;
 //==============================================================================
 // USART1 相关的 DMA 配置函数
 //============================================================================== 
@@ -67,6 +67,7 @@ uint8_t DMA_USART1_Start_TX_DoubleBuf(uint32_t buffer_addr, uint16_t len)
     // 如果上一次  的数据还没发完，说明波特率太低或数据量太大
     if ((DMA2_Stream7->CR & (1 << 0)) != 0) 
     {
+        DMA_Busy_Drop_Count++; // 记录：因为 DMA 还没发完而丢弃的包
         return 1; 
     }
 

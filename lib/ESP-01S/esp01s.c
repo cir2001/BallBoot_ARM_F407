@@ -32,8 +32,19 @@ uint8_t ESP01S_Init_UDP(void)
     // 修改波特率
     OLED_ShowString(0, 32, "Step 2: Baud..", 16);
     OLED_Refresh_Gram(); // 刷新OLED显示
+    //ESP_UART1_SendString("AT+UART_CUR=115200,8,1,0,0\r\n");
+    //ESP01S_Switch_Baud_Safe(BRR_115200); // 使用上面那个安全的切换函数
     ESP_UART1_SendString("AT+UART_CUR=460800,8,1,0,0\r\n");
     ESP01S_Switch_Baud_Safe(BRR_460800); // 使用上面那个安全的切换函数
+    //ESP_UART1_SendString("AT+UART_CUR=921600,8,1,0,0\r\n");
+    //ESP01S_Switch_Baud_Safe(BRR_921600); // 使用上面那个安全的切换函数
+    //ESP_UART1_SendString("AT+UART_CUR=750000,8,1,0,0\r\n");
+    //ESP01S_Switch_Baud_Safe(BRR_750000); // 使用上面那个安全的切换函数
+    //ESP_UART1_SendString("AT+UART_CUR=600000,8,1,0,0\r\n");
+    //ESP01S_Switch_Baud_Safe(BRR_600000); // 使用上面那个安全的切换函数
+    //ESP_UART1_SendString("AT+UART_CUR=500000,8,1,0,0\r\n");
+    //ESP01S_Switch_Baud_Safe(BRR_500000); // 使用上面那个安全的切换函数
+
     ESP_Delay_ms(500); // 切换频率后必须停顿，等待电平稳定
 
     OLED_ShowString(0, 32, "Step 3: AT...", 16);
