@@ -16,6 +16,9 @@
 //设置FLASH 保存地址(必须为偶数，且其值要大于本代码所占用FLASH的大小+0X08000000)
 #define FLASH_SAVE_ADDR  0X08010000 	
 u16 FalshSave[32];
+//--------------------------------------------------------
+extern volatile uint32_t USART2_LastTick = 0; // 用于超时检测
+extern volatile uint32_t sys_ms_ticks;   // 全局毫秒时间戳
 //////////////////////////////////////////////////////////////////
 u8  USART1_RX_BUF[USART_TRANS_LEN];     //接收缓冲,最大128个字节.
 u8  USART1_TX_BUF[USART_TRANS_LEN];     //发送缓冲,最大128个字节.
@@ -41,50 +44,47 @@ u8  rData1Temp,rData2Temp;
 //=========================================================
 // 		USART2 中断服务程序		
 //=========================================================
-void USART2_IRQHandler(void)
+/*void USART2_IRQHandler(void)
 {
     u8 res;
     u32 sr = USART2->SR; // 这里的 SR 必须最先读取
 
-    // 1. 强制错误处理：解决 ORE、FE、NE 锁死问题
-    // 如果不清除这些标志，接收中断将永远停止触发
-    if (sr & 0x0F) // 检查 ORE, NE, FE, PE 位
-    {
-        res = USART2->DR;     // 必须读 DR 才能配合 SR 的读取清除 ORE
-        USART2->SR &= ~0x1F;  // 使用 ~ 符号正确清除所有状态位
-        RxD2pt = 0;           // 发生硬件错误时重置指针，丢弃错误包
+    // 1. 处理硬件错误 (必须首先处理，否则会锁死 RXNE)
+    if (USART2->SR & ((1 << 3) | (1 << 2) | (1 << 1) | (1 << 0))) 
+	{
+        res = (uint8_t)(USART2->SR);
+        res = (uint8_t)(USART2->DR);
+        (void)res;
         return;
     }
 
     // 2. 正常数据接收
-    if (sr & (1 << 5)) // RXNE: 接收缓冲区非空
-    {
-        res = USART2->DR;
+    if (USART2->SR & (1 << 5)) { // 接收到数据 (RXNE)
+        res = (uint8_t)USART2->DR;
         
-        if (res == '#') // 帧起始符：强制重置，保证同步
-        {
+        // 超时重置逻辑：如果距离上次收数超过 100ms，强行重置指针
+        if ((sys_ms_ticks - USART2_LastTick) > 100) {
             RxD2pt = 0;
-            USART2_RX_BUF[RxD2pt++] = res;
         }
-        else if (res == '.') // 帧结束符
-        {
-            if (RxD2pt < USART_TRANS_LEN)
-            {
-                USART2_RX_BUF[RxD2pt] = '.'; // 保存结束符
-                u8Uart2_flag = 1;            // 通知 main 循环解析处理
-            }
-        }
-        else // 存入缓冲区
-        {
-            if (RxD2pt < USART_TRANS_LEN - 1)
-            {
-                USART2_RX_BUF[RxD2pt++] = res;
-            }
-            else // 缓冲区溢出保护
-            {
+        USART2_LastTick = sys_ms_ticks;
+
+        if (u8Uart2_flag == 0) { // 只有处理完旧包才收新包
+            if (res == '#') {    // 帧头检测
                 RxD2pt = 0;
+                USART2_RX_BUF[RxD2pt++] = res;
+            } 
+            else if (RxD2pt > 0) { // 已发现帧头
+                USART2_RX_BUF[RxD2pt++] = res;
+                // 帧尾检测 (\n 或 \r)
+                if (res == '\n' || res == '\r') {
+                    USART2_RX_BUF[RxD2pt] = '\0'; // 强制字符串结束符
+                    u8Uart2_flag = 1; 
+                }
             }
         }
+
+        // 防止缓冲区溢出
+        if (RxD2pt >= USART_TRANS_LEN) RxD2pt = 0;
     }
 
     // 3. 发送完成处理：修正 &= ~ 逻辑
@@ -100,7 +100,7 @@ void USART2_IRQHandler(void)
         }
         USART2->SR &= ~(1 << 6); // 正确清除 TC 位
     }
-}
+}*/
 //=========================================================
 // 		USART3 中断服务程序		
 //=========================================================
@@ -226,7 +226,7 @@ void uart_init1(u32 pclk2, u32 bound)
 //pclk1:PCLK1时钟频率(42Mhz)
 //bound:波特率 
 /*************************************************************** */
-void uart_init2(u32 pclk1,u32 bound)
+/*void uart_init2(u32 pclk1,u32 bound)
 {  	 
 	float temp;
 	u16 mantissa;
@@ -253,7 +253,7 @@ void uart_init2(u32 pclk1,u32 bound)
 	MY_NVIC_Init(1,0,USART2_IRQn,2);//组2，最低优先级 
 #endif
 	USART2->CR1|=1<<13;  	//串口使能
-}
+}*/
 //初始化IO 串口3
 //pclk1:PCLK1时钟频率(42Mhz)
 //bound:波特率 

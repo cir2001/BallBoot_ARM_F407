@@ -21,7 +21,7 @@
 #define EN_USART1_RX 			1		//使能（1）/禁止（0）串口1接收
 #define EN_USART2_RX            1       //使能串口2接收
 #define EN_USART3_RX            1       //使能串口2接收
-	  	
+
 
 void uart_init1(u32 pclk2,u32 bound); 
 void uart_init2(u32 pclk1,u32 bound); 

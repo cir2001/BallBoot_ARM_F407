@@ -149,7 +149,7 @@ void CAN1_RX0_IRQHandler(void)
 //   pos_error: 位置偏差
 // 返回值: 0=发送失败(邮箱全满), 1=发送成功(已放入邮箱)
 //--------------------------------------------------------------------------
-uint8_t CAN_Send_To_Motor(uint32_t motor_id, int32_t real_speed, int32_t pos_error)
+uint8_t CAN_Send_To_Motor(uint32_t motor_id, int real_speed, int pos_error)
 {
     CAN_TX_Count++;
     if(CAN_TX_Count>=500)

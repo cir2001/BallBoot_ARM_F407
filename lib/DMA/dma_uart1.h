@@ -1,5 +1,5 @@
-#ifndef __DMA_DRIVER_H
-#define __DMA_DRIVER_H
+#ifndef __DMA_UART1_H
+#define __DMA_UART1_H
 
 #include "stm32f4xx.h"
 // ==============================================================================
