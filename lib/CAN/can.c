@@ -119,24 +119,31 @@ void CAN1_RX0_IRQHandler(void)
             uint32_t rdlr = CAN1->sFIFOMailBox[0].RDLR; // 编码器值
             uint32_t rdhr = CAN1->sFIFOMailBox[0].RDHR; // 状态值
 
+            // 【核心解包逻辑】
+            // 低16位是 AS5600 原始位置 (0-4095)
+            uint16_t raw_pos = (uint16_t)(rdlr & 0xFFFF);
+            // 高16位是转速 (int16_t，下位机放大了10倍)
+            int16_t raw_speed = (int16_t)(rdlr >> 16);
+
             // 5. 指针偏移优化：直接定位到目标内存地址
             // 这种写法能让编译器生成最简练的汇编代码
             volatile Motor_Feedback_t *m_local = &Motors[m_idx];
             MotorFeedback_t *m_tele = &PingPongBuffer[write_index].motor_data[slot][m_idx];
 
             // 更新本地控制变量
-            m_local->AS5600_val = (int32_t)rdlr;
-            m_local->status     = (uint16_t)rdhr;
-            m_local->last_tick  = Get_System_Tick(); // 使用全局毫秒计数器
+            m_local->AS5600_val = (int32_t)raw_pos;
+            m_local->speed      = (float)raw_speed / 10.0f; // 还原为真实的 deg/s
+            m_local->status     = (uint16_t)(rdhr & 0xFF); // 假设状态占低8位
+            m_local->last_tick  = Get_System_Tick();
 
             // 更新上位机上传变量 (使用精确的 float 常量)
             // 360/4096 = 0.087890625f
-            m_tele->angle  = (float)((int32_t)rdlr) * 0.087890625f;
-            m_tele->status = (uint16_t)rdhr;
+            m_tele->angle  = (float)raw_pos * 0.087890625f; // 绝对角度
+            m_tele->speed  = m_local->speed;               // 【新增】实时转速上传
+            m_tele->status = m_local->status;
         }
     }
         // --- 释放邮箱 (至关重要) ---
-        
         // 6. 释放 FIFO0 输出邮箱 (RFOM0 置 1)
         // 如果不执行这步，FIFO 满了之后就再也收不到新数据了
         CAN1->RF0R |= CAN_RF0R_RFOM0; 

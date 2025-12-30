@@ -12,7 +12,8 @@
 #pragma pack(1)// 必须加在结构体定义最前面
 typedef struct 
 {
-    float angle;      
+    float angle;  
+    float speed;      //当前实时转速 (deg/s)    
     uint16_t status;     
 } MotorFeedback_t;
 

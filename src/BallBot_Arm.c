@@ -418,12 +418,12 @@ void OLED_Refresh_Sliced(void)
             // 使用 fast_itoa 替换 sprintf
             // 渲染目标速度，宽度 6，空格填充
             p += fast_itoa(target_speeds[i], p, 6, ' ');
-            *p++ = ' '; // 分隔符
-            // 渲染编码器值，宽度 5，空格填充
-            fast_itoa(Motors[i].AS5600_val, p, 5, ' ');
-
+            *p++ = '|'; // 分隔符
+            // 显示下位机传回的实际转速 (取整显示，或者用浮点转换)
+            //  显示整数转速
+            p += fast_itoa((int32_t)Motors[i].speed, p, 5, ' ');
             OLED_ShowString(0, 16 + (i * 16), (u8*)display_buf, 16);
-
+            
             // 状态逻辑判定保持不变...
             const char* status_str = (Get_System_Tick() - Motors[i].last_tick > 20) ? "OFF" : 
                                     (Motors[i].status & 0x80 ? "ERR" : " OK");

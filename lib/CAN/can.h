@@ -23,9 +23,10 @@
 
 // 定义电机状态结构体
 typedef struct {
-    int32_t AS5600_val;       // 当前角度
-    uint8_t status;      // 健康状态
-    uint32_t last_tick;  // 用于主机端心跳检测
+    int32_t  AS5600_val; // 当前原始位置 (0-4095)
+    float    speed;      // 【新增】当前实时转速 (deg/s)
+    uint16_t status;     // 状态位
+    uint32_t last_tick;  // 用于超时检测
 } Motor_Feedback_t;
 
 // 全局数组，存储3个电机状态
