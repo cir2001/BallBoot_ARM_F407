@@ -3,6 +3,8 @@
 // Created on: Dec 9, 2025
 //*****************************************************
 #include "mahony.h"
+#include "delay.h"
+#include "math.h"
 // ================= 私有变量 (Static) =================
 // 使用 static 关键字，确保这些变量只能在本文件内部被访问
 static volatile float twoKp = MAHONY_KP_DEF; 
@@ -10,17 +12,13 @@ static volatile float twoKi = MAHONY_KI_DEF;
 static volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;
 static volatile float integralFBx = 0.0f, integralFBy = 0.0f, integralFBz = 0.0f;
 
+static volatile float gyro_bias[3] = {0.0f, 0.0f, 0.0f};
+static volatile int is_calibrated = 0;
 // ================= 内部辅助函数 =================
 // 快速倒数平方根 (STM32F4 若开启 FPU，也可用 1.0f/sqrtf(x))
 static float invSqrt(float x) 
 {
-    float halfx = 0.5f * x;
-    float y = x;
-    long i = *(long*)&y;
-    i = 0x5f3759df - (i>>1);
-    y = *(float*)&i;
-    y = y * (1.5f - (halfx * y * y));
-    return y;
+    return 1.0f / sqrtf(x); // F407 开启 FPU 后，sqrtf 非常快
 }
 // ================= 接口函数实现 =================
 // 初始化函数
@@ -39,6 +37,18 @@ void AHRS_Update(float gx, float gy, float gz, float ax, float ay, float az, flo
     float halfvx, halfvy, halfvz;
     float halfex, halfey, halfez;
     float qa, qb, qc;
+
+    // 应用校准值
+    if(is_calibrated) {
+        gx -= gyro_bias[0];
+        gy -= gyro_bias[1];
+        gz -= gyro_bias[2];
+    }
+    //  静态死区过滤 (防止极小的噪声引起积分漂移)
+    // 对于 MPU6500，0.005 rad/s 是一个比较保守的阈值
+    if(fabs(gx) < 0.005f) gx = 0.0f;
+    if(fabs(gy) < 0.005f) gy = 0.0f;
+    if(fabs(gz) < 0.005f) gz = 0.0f;
 
     // 1. 如果加速度计数据无效（全0），则无法修正，直接返回
     if(!((ax != 0.0f) && (ay != 0.0f) && (az != 0.0f))) return;
@@ -113,4 +123,26 @@ void AHRS_GetEulerAngle(IMU_Angle_t *angle)
     angle->yaw   = atan2(2.0f * (q1 * q2 + q0 * q3), q0 * q0 + q1 * q1 - q2 * q2 - q3 * q3) * 57.29578f;
 }
 
-
+//-------------------------------------------------------------------
+// @brief 陀螺仪静态校准
+// @param get_gyro_raw_func: 外部提供的读取原始数据的函数指针 (单位: rad/s)
+//-------------------------------------------------------------------
+void AHRS_Calibrate(void (*get_gyro_raw_func)(float*, float*, float*))
+{
+    float gx, gy, gz;
+    float sum[3] = {0.0f, 0.0f, 0.0f};
+    const int sample_count = 1000;
+    
+    for(int i = 0; i < sample_count; i++) {
+        get_gyro_raw_func(&gx, &gy, &gz);
+        sum[0] += gx;
+        sum[1] += gy;
+        sum[2] += gz;
+        delay_ms(1); // 采样间隔，F407 建议使用系统延时
+    }
+    
+    gyro_bias[0] = sum[0] / sample_count;
+    gyro_bias[1] = sum[1] / sample_count;
+    gyro_bias[2] = sum[2] / sample_count;
+    is_calibrated = 1;
+}

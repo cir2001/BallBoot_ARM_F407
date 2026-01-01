@@ -17,20 +17,31 @@ extern volatile uint8_t write_index;
 extern volatile uint8_t sample_in_buf_cnt;
 extern volatile uint8_t g_send_data_flag;
 
+extern volatile int Target_Speed_M1; 
+extern volatile int Target_Speed_M2;
+extern volatile int Target_Speed_M3;
+
 extern volatile uint8_t g_last_send_index; // 记录待发送的缓冲区索引
 u16 u16EXIT0Count,u16EXIT1Count;						  
 ////////////////////////////////////////////////////////////////////////////////// 
 //外部中断0服务程序
 void EXTI0_IRQHandler(void)
 {
+	uint32_t start_count, stop_count; // 用于记录 DWT 计数值
 	// 立即读取 MPU 数据
 	int16_t r_gx, r_gy, r_gz, r_ax, r_ay, r_az;
 	MPU6500_Get_Gyroscope(&r_gx, &r_gy, &r_gz);
 	MPU6500_Get_Accelerometer(&r_ax, &r_ay, &r_az);
 
+	// --- 开始计时 ---
+    start_count = DWT->CYCCNT;
+
 	// 姿态解算 (Mahony 只有 1ms 积分，F407 开启 FPU 后仅需约 50us)
-	AHRS_Update(r_gx * 0.0010653f, r_gy * 0.0010653f, r_gz * 0.0010653f, 
+	AHRS_Update(r_gx * 0.0010642f, r_gy * 0.0010642f, r_gz * 0.0010642f, 
 				(float)r_ax, (float)r_ay, (float)r_az, 0.001f);
+
+	// --- 结束计时 ---
+    stop_count = DWT->CYCCNT;
 
 	// 填充缓冲区 (此时主循环正在忙别的事也不怕，中断会准时填表)
 	HybridPacket_t* p_buf = &PingPongBuffer[write_index];
@@ -52,6 +63,15 @@ void EXTI0_IRQHandler(void)
 		p_buf->ctrl_info[c_idx].euler[0] = current_angle.roll;
 		p_buf->ctrl_info[c_idx].euler[1] = current_angle.pitch;
 		p_buf->ctrl_info[c_idx].euler[2] = current_angle.yaw;
+
+		// 计算耗时：(结束值 - 开始值) / (SystemCoreClock / 1,000,000)
+        // F407 运行在 168MHz，所以直接除以 168 即可得到微秒
+        uint32_t diff = stop_count - start_count;
+        p_buf->ctrl_info[c_idx].ctrl_dt = (uint16_t)(diff / 168);
+
+		p_buf->ctrl_info[c_idx].motor_out[0] = (int16_t)Target_Speed_M1;
+		p_buf->ctrl_info[c_idx].motor_out[1] = (int16_t)Target_Speed_M2;
+		p_buf->ctrl_info[c_idx].motor_out[2] = (int16_t)Target_Speed_M3;
 	}
 
 	sample_in_buf_cnt++;

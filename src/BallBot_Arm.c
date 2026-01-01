@@ -144,8 +144,8 @@ void OLED_Refresh_Sliced(void);
 uint8_t DMA_Submit_And_Switch_Buffer(void);
 void Buffer_Clear_And_Init(HybridPacket_t *buf);
 int fast_itoa(int32_t val, char* buf, uint8_t width, char pad);
-
-
+void Read_MPU6500_Gyro(float *x, float *y, float *z);
+//-----------------------------------------------
 // 缓冲区管理变量
 HybridPacket_t PingPongBuffer[2]; 
 volatile uint8_t  write_index = 0;       // 当前写入缓冲区的索引
@@ -190,18 +190,10 @@ float f_acc[3], f_gyro[3]; // 滤波变量
 
 u8 i,res,res1;
 
-u8 res,u8Led0_Counter;
-u8 mpu_int_count;
-
-u32 u16counter;
-
 u16 oled_tick;
 
 // 定义一个结构体变量存放角度
 IMU_Angle_t current_angle;
-//int16_t cnt;
-//int16_t iMotorA_Encoder,iMotorB_Encoder,iMotorC_Encoder;
-//long int iMotorAPulseTotle,iMotorBPulseTotle,iMotorCPulseTotle;
 //======= 主程序 Main ==================================
 int main(void)
 { 
@@ -240,6 +232,14 @@ int main(void)
 
     // --- 初始化 AHRS 算法 ---
     AHRS_Init();
+
+    // 3. 执行校准 (此时必须保证板子静止！)
+    OLED_ShowString(0, 16, (u8*)"MPU Calibrate", 16);
+    OLED_Refresh_Gram();
+    AHRS_Calibrate(Read_MPU6500_Gyro);
+    OLED_ShowString(0, 16, (u8*)"MPU Init Done", 16);
+    OLED_Refresh_Gram();
+    delay_ms(500); 
 
     // --- 初始化串口 ---
     // 串口1
@@ -406,7 +406,6 @@ void OLED_Refresh_Sliced(void)
     int32_t target_speeds[3] = {Target_Speed_M1, Target_Speed_M2, Target_Speed_M3};
     //int32_t target_speeds[3] = {DMA_Busy_Drop_Count, DMA_Busy_Drop_Count, DMA_Busy_Drop_Count};
 
-
     switch (refresh_step) 
     {
         case 0: 
@@ -537,6 +536,14 @@ void Buffer_Clear_And_Init(HybridPacket_t *buf)
     buf->type = 0x01;       //前期不区分快慢帧，统一20ms间隔发送
     buf->tail[0] = 0x0D;
     buf->tail[1] = 0x0A;
+}
+//------------------------------------------------
+// @brief 读取 MPU6500 陀螺仪数据 (单位: rad/s)
+//------------------------------------------------
+void Read_MPU6500_Gyro(float *x, float *y, float *z) 
+{
+    // 这里放你现有的 MPU6500 读取逻辑，确保输出单位是 rad/s
+    MPU6500_Get_Gyroscope(x, y, z); 
 }
 //===========================================================================
 //

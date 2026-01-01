@@ -17,7 +17,7 @@ extern u16 oled_tick;
 //-----------------------------------------------
 // 变量声明
 //-----------------------------------------------
-volatile int Target_Speed_M1 = 100; 
+volatile int Target_Speed_M1 = 0; 
 volatile int Target_Speed_M2 = 0;
 volatile int Target_Speed_M3 = 0;
 
