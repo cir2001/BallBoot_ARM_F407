@@ -144,7 +144,6 @@ void OLED_Refresh_Sliced(void);
 uint8_t DMA_Submit_And_Switch_Buffer(void);
 void Buffer_Clear_And_Init(HybridPacket_t *buf);
 int fast_itoa(int32_t val, char* buf, uint8_t width, char pad);
-void Read_MPU6500_Gyro(float *x, float *y, float *z);
 //-----------------------------------------------
 // 缓冲区管理变量
 HybridPacket_t PingPongBuffer[2]; 
@@ -537,14 +536,8 @@ void Buffer_Clear_And_Init(HybridPacket_t *buf)
     buf->tail[0] = 0x0D;
     buf->tail[1] = 0x0A;
 }
-//------------------------------------------------
-// @brief 读取 MPU6500 陀螺仪数据 (单位: rad/s)
-//------------------------------------------------
-void Read_MPU6500_Gyro(float *x, float *y, float *z) 
-{
-    // 这里放你现有的 MPU6500 读取逻辑，确保输出单位是 rad/s
-    MPU6500_Get_Gyroscope(x, y, z); 
-}
+
+
 //===========================================================================
 //
 //  FreeRtos function

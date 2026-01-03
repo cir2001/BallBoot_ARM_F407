@@ -52,6 +52,9 @@ void AHRS_GetEulerAngle(IMU_Angle_t *angle);
 //-------------------------------------------------
 void AHRS_Calibrate(void (*get_gyro_raw_func)(float*, float*, float*));
 
+void Read_MPU6500_Gyro(float *x, float *y, float *z);
+
 #endif /* __MAHONY_H__ */
+
 
 

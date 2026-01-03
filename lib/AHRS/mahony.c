@@ -146,3 +146,12 @@ void AHRS_Calibrate(void (*get_gyro_raw_func)(float*, float*, float*))
     gyro_bias[2] = sum[2] / sample_count;
     is_calibrated = 1;
 }
+//------------------------------------------------
+// @brief 读取 MPU6500 陀螺仪数据 (单位: rad/s)
+//------------------------------------------------
+void Read_MPU6500_Gyro(float *x, float *y, float *z) 
+{
+    // 这里放你现有的 MPU6500 读取逻辑，确保输出单位是 rad/s
+    MPU6500_Get_Gyroscope(x, y, z); 
+}
+
