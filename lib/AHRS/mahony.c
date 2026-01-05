@@ -19,13 +19,20 @@ static float invSqrt(float x)
 {
     float halfx = 0.5f * x;
     float y = x;
-    long i = *(long*)&y;
+    uint32_t i; // 使用 uint32_t 确保在 32 位系统上准确匹配 float 长度
+
+    // 使用 memcpy 代替指针强制转换，规避 Strict-Aliasing 警告
+    memcpy(&i, &y, sizeof(i));
+    
     i = 0x5f3759df - (i >> 1);
-    y = *(float*)&i;
+    
+    memcpy(&y, &i, sizeof(y));
+
     y = y * (1.5f - (halfx * y * y));
+    // y = y * (1.5f - (halfx * y * y)); // 如果需要更高精度，可以取消注释第二项迭代
+    
     return y;
 }
-
 // ================= 接口函数实现 =================
 
 // 初始化函数
@@ -289,7 +296,6 @@ static void AHRS_SetInitialQuaternion(float roll, float pitch, float yaw)
     q2 = cr * sp * cy + sr * cp * sy;
     q3 = cr * cp * sy - sr * sp * cy;
 }
-
 //------------------------------------------------------------
 //  @brief 快速对准初始化 (消除启动爬升曲线)
 //  @param ax, ay, az : 初始加速度

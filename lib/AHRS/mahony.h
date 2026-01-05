@@ -45,7 +45,8 @@ void AHRS_GetEulerAngle(IMU_Angle_t *angle);
 //-------------------------------------------------
 void AHRS_Calibrate(void);
 
-static void AHRS_SetInitialQuaternion(float roll, float pitch, float yaw);
+
+
 void AHRS_Init_Fast(float ax, float ay, float az, float mx, float my, float mz);
 
 
