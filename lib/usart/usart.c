@@ -40,67 +40,6 @@ int32_t recv_uart2_M1_val,recv_uart2_M2_val,recv_uart2_M3_val;
 
 int32_t temp_val;
 u8  rData1Temp,rData2Temp;
-
-//=========================================================
-// 		USART2 中断服务程序		
-//=========================================================
-/*void USART2_IRQHandler(void)
-{
-    u8 res;
-    u32 sr = USART2->SR; // 这里的 SR 必须最先读取
-
-    // 1. 处理硬件错误 (必须首先处理，否则会锁死 RXNE)
-    if (USART2->SR & ((1 << 3) | (1 << 2) | (1 << 1) | (1 << 0))) 
-	{
-        res = (uint8_t)(USART2->SR);
-        res = (uint8_t)(USART2->DR);
-        (void)res;
-        return;
-    }
-
-    // 2. 正常数据接收
-    if (USART2->SR & (1 << 5)) { // 接收到数据 (RXNE)
-        res = (uint8_t)USART2->DR;
-        
-        // 超时重置逻辑：如果距离上次收数超过 100ms，强行重置指针
-        if ((sys_ms_ticks - USART2_LastTick) > 100) {
-            RxD2pt = 0;
-        }
-        USART2_LastTick = sys_ms_ticks;
-
-        if (u8Uart2_flag == 0) { // 只有处理完旧包才收新包
-            if (res == '#') {    // 帧头检测
-                RxD2pt = 0;
-                USART2_RX_BUF[RxD2pt++] = res;
-            } 
-            else if (RxD2pt > 0) { // 已发现帧头
-                USART2_RX_BUF[RxD2pt++] = res;
-                // 帧尾检测 (\n 或 \r)
-                if (res == '\n' || res == '\r') {
-                    USART2_RX_BUF[RxD2pt] = '\0'; // 强制字符串结束符
-                    u8Uart2_flag = 1; 
-                }
-            }
-        }
-
-        // 防止缓冲区溢出
-        if (RxD2pt >= USART_TRANS_LEN) RxD2pt = 0;
-    }
-
-    // 3. 发送完成处理：修正 &= ~ 逻辑
-    if (sr & (1 << 6)) // TC: 发送完成
-    {
-        if (TxD2pt < TxD2Num)
-        {
-            USART2->DR = USART2_TX_BUF[TxD2pt++];
-        }
-        else
-        {
-            u8TxD2Busy = 0;
-        }
-        USART2->SR &= ~(1 << 6); // 正确清除 TC 位
-    }
-}*/
 //=========================================================
 // 		USART3 中断服务程序		
 //=========================================================
@@ -221,39 +160,7 @@ void uart_init1(u32 pclk2, u32 bound)
     // --- 4. 使能串口 ---
     USART1->CR1 |= 1 << 13;     // UE (USART Enable)
 }
-/*************************************************************** */
-//初始化IO 串口2
-//pclk1:PCLK1时钟频率(42Mhz)
-//bound:波特率 
-/*************************************************************** */
-/*void uart_init2(u32 pclk1,u32 bound)
-{  	 
-	float temp;
-	u16 mantissa;
-	u16 fraction;	   
-	temp=(float)(pclk1*1000000)/(bound*16);//得到USARTDIV@OVER8=0
-	mantissa=temp;				 //得到整数部分
-	fraction=(temp-mantissa)*16; //得到小数部分@OVER8=0 
-    mantissa<<=4;
-	mantissa+=fraction; 
-	RCC->AHB1ENR|=1<<0;   	//使能PORTA口时钟  
-	RCC->APB1ENR|=1<<17;  	//使能串口2时钟 
-	GPIO_Set(GPIOA,PIN2|PIN3,GPIO_MODE_AF,GPIO_OTYPE_PP,GPIO_SPEED_50M,GPIO_PUPD_PU);//PA2,PA3,复用功能,上拉输出
- 	GPIO_AF_Set(GPIOA,2,7);	//PA2,AF7
-	GPIO_AF_Set(GPIOA,3,7);	//PA3,AF7  	   
-	//波特率设置
- 	USART2->BRR=mantissa; 	//波特率设置	 
-	USART2->CR1&=~(1<<15); 	//设置OVER8=0 
-	USART2->CR1|=1<<3;  	//串口发送使能 
-#if EN_USART2_RX		  	//如果使能了接收
-	//使能接收中断 
-	USART2->CR1|=1<<2;  	//串口接收使能
-	USART2->CR1|=1<<5;    	//接收缓冲区非空中断使
-	USART2->CR1|=1<<6;    //发送缓冲区非空中断使能	    	
-	MY_NVIC_Init(1,0,USART2_IRQn,2);//组2，最低优先级 
-#endif
-	USART2->CR1|=1<<13;  	//串口使能
-}*/
+
 //初始化IO 串口3
 //pclk1:PCLK1时钟频率(42Mhz)
 //bound:波特率 
@@ -285,6 +192,25 @@ void uart_init3(u32 pclk1,u32 bound)
 #endif
 	USART3->CR1|=1<<13;  	//串口使能
 }
+//--------------------------------------------------------------------------
+// @brief  串口1发送一个字节
+//---------------------------------------------------------------------------
+void uart2_send_byte(u8 data)
+{
+    while (!(USART2->SR & USART_SR_TXE)); 
+    USART2->DR = data;
+}
+//--------------------------------------------------------------------------
+// @brief  重定向 printf 到串口 1
+//--------------------------------------------------------------------------
+int _write(int file, char *ptr, int len)
+{
+    for (int i = 0; i < len; i++) {
+        uart2_send_byte((uint8_t)ptr[i]);
+    }
+    return len;
+}
+
 //=========================================================
 // UART1 指令回报
 //

@@ -5,14 +5,7 @@
 ////////////////////////////////////////////////////////////////////////////////// 	 
 //---- LED IO初始化 ----
 void LED_Init(void)
-{    	 
-	//--- 开发板上的LED端口初始化 占用PCB PA6 PA7 对应与rasburry通讯的SPI1的MISO和MOSI引脚 ---
-	//RCC->AHB1ENR|=1<<0;//使能PORTA时钟 
-	//GPIO_Set(GPIOA,PIN6|PIN7,GPIO_MODE_OUT,GPIO_OTYPE_PP,GPIO_SPEED_100M,GPIO_PUPD_PU); //PA6,PA7设置
-
-	//LED0=1;//LED0 0:打开；1：关闭
-	//LED1=1;//LED1关闭
-
+{
 	//--- PCB上的LED端口初始化  ---
 	RCC->AHB1ENR|=1<<2;//使能PORTC时钟 
 	RCC->AHB1ENR|=1<<3;//使能PORTD时钟 

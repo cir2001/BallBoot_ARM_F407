@@ -4,7 +4,75 @@
 ////////////////////////////////////////////////////////////////////////////////// 	 
 //以下是SPI模块的初始化代码，配置成主机模式 						  
 //SPI口初始化
-//这里针是对SPI2的初始化
+//////////////////////////////////////////////////////////////////////////////////	 
+//	SPI1 初始化						  
+////////////////////////////////////////////////////////////////////////////////// 	 
+void SPI1_Init(void) 
+{
+    // 1. 使能 GPIOA 和 SPI1 时钟
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    RCC->APB2ENR |= RCC_APB2ENR_SPI1EN;
+
+    // 2. 配置 PA5(SCK), PA6(MISO), PA7(MOSI) 为复用功能 (AF5)
+    // 使用 PUPD_PU (上拉) 保证信号在空闲时稳定
+    GPIO_Set(GPIOA, PIN5|PIN6|PIN7, GPIO_MODE_AF, GPIO_OTYPE_PP, GPIO_SPEED_100M, GPIO_PUPD_PU);
+    GPIO_AF_Set(GPIOA, 5, 5);  // PA5 -> SPI1_SCK
+    GPIO_AF_Set(GPIOA, 6, 5);  // PA6 -> SPI1_MISO
+    GPIO_AF_Set(GPIOA, 7, 5);  // PA7 -> SPI1_MOSI
+    
+    // 3. 配置 PA4(CS) 为普通输出，并初始化为高电平
+    GPIO_Set(GPIOA, PIN4, GPIO_MODE_OUT, GPIO_OTYPE_PP, GPIO_SPEED_100M, GPIO_PUPD_PU);
+    GPIOA->BSRR = (1 << 4);    // 显式拉高片选
+
+    // 4. 配置 SPI1 寄存器
+    // 必须确保 SPE=0 (SPI关闭状态) 才能修改 BR/CPOL/CPHA 等位
+    SPI1->CR1 = 0; 
+
+    // --- 频率设置 ---
+    // BR[2:0] 含义 (fPCLK2 = 84MHz):
+    // 011 (3): 16分频 = 5.25MHz
+    // 100 (4): 32分频 = 2.625MHz (绞线连接建议使用此频率)
+    SPI1->CR1 |= (4 << 3);      // 设置为 32 分频 (2.625MHz)
+    
+    // --- 模式设置 ---
+    SPI1->CR1 |= SPI_CR1_MSTR;  // 主机模式
+    SPI1->CR1 |= SPI_CR1_CPOL;  // Mode 3: CPOL=1
+    SPI1->CR1 |= SPI_CR1_CPHA;  // Mode 3: CPHA=1
+    SPI1->CR1 |= SPI_CR1_SSM;   // 软件从机管理
+    SPI1->CR1 |= SPI_CR1_SSI;   // 内部 SS 信号置高
+    
+    // 5. 使能 SPI1
+    SPI1->CR1 |= SPI_CR1_SPE; 
+    
+    // 启动传输前读一次 DR 寄存器清空可能存在的残留接收标志
+    (void)SPI1->DR;
+}
+
+// SPI1 读写单字节 (带状态自锁增强)
+u8 SPI1_ReadWriteByte(u8 tx_data) 
+{
+    // 等待发送缓冲区空 (TXE)
+    while (!(SPI1->SR & SPI_SR_TXE)); 
+    SPI1->DR = tx_data;
+    
+    // 等待接收缓冲区非空 (RXNE)
+    while (!(SPI1->SR & SPI_SR_RXNE)); 
+    return SPI1->DR;
+}
+
+// SPI1 速度设置函数
+void SPI1_SetSpeed(u8 SpeedSet)
+{
+    SpeedSet &= 0x07;           // 限制范围 0~7
+    SPI1->CR1 &= ~SPI_CR1_SPE;  // 修改波特率前必须先关闭 SPI
+    SPI1->CR1 &= ~(7 << 3);     // 清除旧的 BR 位
+    SPI1->CR1 |= (SpeedSet << 3); 
+    SPI1->CR1 |= SPI_CR1_SPE;   // 重新开启
+}
+
+//////////////////////////////////////////////////////////////////////////////////	 
+//	SPI2初始化						  
+////////////////////////////////////////////////////////////////////////////////// 	 
 void SPI2_Init(void)
 {	 
 	u16 tempreg = 0;

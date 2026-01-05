@@ -107,13 +107,17 @@
 //		KEY0	<------->		PE3
 //		KEY1	<------->		PE4
 //=========================================================
+//  芯片说明
+//--- MMC5603C 3轴数字磁力计----
+// 国产芯片的ADDR因版本不同，为0x30-0x38，需问卖家
+// 芯片版本不同，器件ID返回值不定，因此无需进行ID号读取
+//=========================================================
 #include "sys.h"
 #include "usart.h" 
 #include "delay.h" 
 #include "led.h" 
 #include "spi.h"
 #include "math.h"
-#include "mpu6500_driver.h"
 #include "mpuiic.h"
 #include "exti.h" 
 #include "stdint.h"			//定义bool变量需要加入这行
@@ -126,6 +130,8 @@
 #include "dma_uart2.h"
 #include "mahony.h"
 #include "esp01s.h"
+#include "icm42688.h"
+#include "mmc5603.h" 
 
 #include "FreeRTOS.h"
 #include "task.h"   
@@ -181,15 +187,18 @@ extern int32_t Target_Speed_M1,Target_Speed_M2,Target_Speed_M3;   // 设定的�
 //-----------------------------------------------
 /* --- 系统状态变量  --- */
 static uint16_t global_packet_id = 0; // 仅在 main 使用，普通 static 即可
+volatile float g_mag_x = 0.0f, g_mag_y = 0.0f, g_mag_z = 0.0f; // 主循环读到的校准后的磁力计数据
 
 int16_t gy_X,gy_Y,gy_Z;
 int16_t ac_X,ac_Y,ac_Z;
 
 float f_acc[3], f_gyro[3]; // 滤波变量
 
+
 u8 i,res,res1;
 
-u16 oled_tick;
+u8 oled_tick;
+u8 magic_tick;
 
 // 定义一个结构体变量存放角度
 IMU_Angle_t current_angle;
@@ -208,46 +217,73 @@ int main(void)
 
     KEY_Init();
 	LED_Init();
+    SPI1_Init();
+    delay_ms(100);
 
 	// --- OLED 最先启动，方便观察 ---
     SPI2_Init();
     delay_us(10);
     OLED_Init();
     OLED_Clear();
-    OLED_ShowString(0, 0,(u8*)"System Booting...", 16);
+    OLED_ShowString(0, 0,(u8*)"System Booting..  ", 16);
     OLED_Refresh_Gram(); // 第一次刷新
     delay_ms(3000); // 保持 2 秒
 
+    
     // --- 初始化传感器，但不开启定时器发送 ---
-    OLED_ShowString(0, 16, (u8*)"Init MPU...", 16);
+    OLED_ShowString(0, 16, (u8*)"Init IMU ICM  ", 16);
     OLED_Refresh_Gram();
     delay_ms(2000); // 保持 2 秒
-    if(MPU6500_Init() != 0) 
+    if(ICM42688_Init() == 0) 
     {
+        OLED_ShowString(0, 16, (u8*)"ICM Failed!  ", 16);
+        OLED_Refresh_Gram();
+        delay_ms(1000);
         // 如果初始化失败，让一个 LED 长亮或快闪报警
         while(1) { LED_MA = !LED_MA; delay_ms(100); }
+    }else if(ICM42688_Init() == 1)
+    {
+        // 执行校准 (此时必须保证板子静止！)
+        OLED_ShowString(0, 16, (u8*)"Success!    ", 16);
+        OLED_Refresh_Gram();
+        delay_ms(1000);
+        OLED_ShowString(0, 16, (u8*)"Calibrate..  ", 16);
+        OLED_Refresh_Gram();
+        delay_ms(500); // 保持 1 秒
+        // --- 初始化 AHRS 算法 ---
+        AHRS_Init();
+        AHRS_Calibrate(); // 启动时自动校准，需保持机器人静止
+        OLED_ShowString(0, 16, (u8*)"ICM Done!   ", 16);
+        OLED_Refresh_Gram();
+        delay_ms(1000);
     }
-    delay_ms(100); // 等待 MPU6500 准备好
 
-    // --- 初始化 AHRS 算法 ---
-    AHRS_Init();
-
-    // 3. 执行校准 (此时必须保证板子静止！)
-    OLED_ShowString(0, 16, (u8*)"MPU Calibrate", 16);
+    OLED_ShowString(0, 16, (u8*)"Init IMU MMC   ", 16);
     OLED_Refresh_Gram();
-    AHRS_Calibrate(Read_MPU6500_Gyro);
-    OLED_ShowString(0, 16, (u8*)"MPU Init Done", 16);
-    OLED_Refresh_Gram();
-    delay_ms(500); 
+    delay_ms(2000); // 保持 2 秒
+    if(MMC5603_Init() == 0) 
+    {
+        OLED_ShowString(0, 16, (u8*)"MMC Failed!   ", 16);
+        OLED_Refresh_Gram();
+        delay_ms(1000);
+        // 如果初始化失败，让一个 LED 长亮或快闪报警
+        while(1) { LED_MA = !LED_MA; delay_ms(100); }
+    }else if(MMC5603_Init() == 1)
+    {
+        // 执行校准 (此时必须保证板子静止！)
+        OLED_ShowString(0, 16, (u8*)"MMC Success!  ", 16);
+        OLED_Refresh_Gram();
+        delay_ms(1000);
+    }
 
     // --- 初始化串口 ---
     // 串口1
-    OLED_ShowString(0, 16, (u8*)"Init UART1...", 16);
+    OLED_ShowString(0, 16, (u8*)"Init UART1...   ", 16);
     OLED_Refresh_Gram();
     delay_ms(500); // 保持 1 秒
     uart_init1(84,921600);
     // 串口2
-    OLED_ShowString(0, 16, (u8*)"Init UART2...", 16);
+    OLED_ShowString(0, 16, (u8*)"Init UART2...   ", 16);
     OLED_Refresh_Gram();
     delay_ms(500); // 保持 1 秒
     DMA_Config_USART2(115200);
@@ -255,7 +291,7 @@ int main(void)
     //delay_ms(100); // 等待串口初始化完成
 
     //--- 初始化 CAN ---
-    OLED_ShowString(0, 16, (u8*)"Init CAN...", 16);
+    OLED_ShowString(0, 16, (u8*)"Init CAN...   ", 16);
     OLED_Refresh_Gram();
     delay_ms(500); // 保持 1 秒
     CAN1_Mode_Init();
@@ -270,14 +306,14 @@ int main(void)
 	// 参数1 (ARR): 1999  -> 计数 2000 次
 	// 参数2 (PSC): 16799 -> 预分频 16800 (时钟变为 10kHz, 0.1ms)
 	//TIM1_Int_Init(1999, 16799);
-    OLED_ShowString(0, 16, (u8*)"Init TIMER...", 16);
+    OLED_ShowString(0, 16, (u8*)"Init TIMER...   ", 16);
     OLED_Refresh_Gram();
     delay_ms(500); // 保持 1 秒
 	TIM2_Int_Init(500-1,840-1); //5ms
 //	TIM3_Int_Init(500-1,840-1);//10Khz的计数频率，计数5K次为500ms 
 
     // 配置 DMA 1 用于 USART1 发送接收 
-    OLED_ShowString(0, 16, (u8*)"Init DMA...", 16);
+    OLED_ShowString(0, 16, (u8*)"Init DMA...   ", 16);
     OLED_Refresh_Gram();
     delay_ms(500); // 等待 CAN 初始化完成
     DMA_Config_USART1();    //  应在ESP-01S 初始化后进行
@@ -298,13 +334,14 @@ int main(void)
     }
 
     // 启动外部中断
-    OLED_ShowString(0, 16, (u8*)"Init EXTI...", 16);
+    OLED_ShowString(0, 16, (u8*)"Init EXTI...   ", 16);
     OLED_Refresh_Gram();
     delay_ms(500); // 等待 CAN 初始化完成
+   
     EXTIX_Init();
 
     OLED_Clear();
-    OLED_ShowString(0, 0, (u8*)"System Online", 16);
+    OLED_ShowString(0, 0, (u8*)"System Online    ", 16);
     OLED_Refresh_Gram(); // 刷新
     delay_ms(1000);
     //--- OLED 进入主界面 ---
@@ -347,6 +384,8 @@ int main(void)
             {
                 DMA_Busy_Drop_Count++; // 依然记录忙碌状态
             }
+
+            
         }
         // ==========================================================
         // 任务2：串口 2 指令解析 (#S+20000,-20000,+20000.)
@@ -381,7 +420,18 @@ int main(void)
             memset(USART2_RX_BUF, 0, USART2_MAX_RX_LEN);
         }
         // ==========================================================
-        // 任务3：低频任务 (OLED 刷新等)
+        // 任务 低频任务 (Magic 刷新)
+        // ==========================================================
+        // 每 50ms 刷新一次
+        if (magic_tick >= 10)
+        {
+            magic_tick = 0;
+            //MMC5603_ReadData(&g_mag_x, &g_mag_y, &g_mag_z);
+            //printf("X: %.3f G   Y: %.3f G   Z: %.3f G\r\n", g_mag_x, g_mag_y, g_mag_z);
+           //delay_ms(100);  // 10Hz打
+        }
+        // ==========================================================
+        // 任务 低频任务 (OLED 刷新等)
         // ==========================================================
         // 每 100ms 刷新一次屏幕 (1ms * 100 = 100ms)
         if (oled_tick >= 10)

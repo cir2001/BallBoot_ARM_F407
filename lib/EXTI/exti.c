@@ -1,10 +1,8 @@
 #include "exti.h"
-#include "delay.h" 
 #include "led.h" 
 #include "key.h"
 #include "dma_uart1.h"
-#include "mpu6500_driver.h"
-#include "mpuiic.h"
+#include "icm42688.h"
 #include "mahony.h"
 //////////////////////////////////////////////////////////////////////////////////	
 // 定义一个结构体变量存放角度
@@ -22,23 +20,42 @@ extern volatile int Target_Speed_M2;
 extern volatile int Target_Speed_M3;
 
 extern volatile uint8_t g_last_send_index; // 记录待发送的缓冲区索引
-u16 u16EXIT0Count,u16EXIT1Count;						  
+
+extern float g_mag_x, g_mag_y, g_mag_z; // 主循环读到的校准后的磁力计数据
+
+u16 u16EXIT0Count,u16EXIT1Count;	
+
+volatile ICM_Data g_imu_data;
 ////////////////////////////////////////////////////////////////////////////////// 
 //外部中断0服务程序
 void EXTI0_IRQHandler(void)
 {
 	uint32_t start_count, stop_count; // 用于记录 DWT 计数值
 	// 立即读取 MPU 数据
-	int16_t r_gx, r_gy, r_gz, r_ax, r_ay, r_az;
-	MPU6500_Get_Gyroscope(&r_gx, &r_gy, &r_gz);
-	MPU6500_Get_Accelerometer(&r_ax, &r_ay, &r_az);
+	//int16_t r_gx, r_gy, r_gz, r_ax, r_ay, r_az;
+	ICM42688_ReadData((ICM_Data*)&g_imu_data);
 
+	float gx_rad = (float)g_imu_data.gyro_x / 16.4f * (3.1415926f / 180.0f);
+	float gy_rad = (float)g_imu_data.gyro_y / 16.4f * (3.1415926f / 180.0f);
+	float gz_rad = (float)g_imu_data.gyro_z / 16.4f * (3.1415926f / 180.0f);
+
+	float acc_x_g = (float)g_imu_data.acc_x /16384.0f;
+	float acc_y_g = (float)g_imu_data.acc_y /16384.0f;
+	float acc_z_g = (float)g_imu_data.acc_z /16384.0f;
 	// --- 开始计时 ---
     start_count = DWT->CYCCNT;
 
 	// 姿态解算 (Mahony 只有 1ms 积分，F407 开启 FPU 后仅需约 50us)
-	AHRS_Update(r_gx * 0.0010642f, r_gy * 0.0010642f, r_gz * 0.0010642f, 
-				(float)r_ax, (float)r_ay, (float)r_az, 0.001f);
+	// AHRS_Update_9axis(gx_rad, gy_rad, gz_rad, 
+	//                acc_x_g, acc_y_g, acc_z_g, 
+	//                g_mag_x, g_mag_y, g_mag_z, 0.001f);
+
+	// AHRS_Update_9axis(gx_rad, gy_rad, gz_rad, 
+	//                acc_x_g, acc_y_g, acc_z_g, 
+	//                0, 0, 0, 0.001f);
+
+	AHRS_Update_6axis(gx_rad, gy_rad, gz_rad,
+					  acc_x_g, acc_y_g, acc_z_g, 0.001f);
 
 	// --- 结束计时 ---
     stop_count = DWT->CYCCNT;
@@ -48,12 +65,12 @@ void EXTI0_IRQHandler(void)
 	
 	if (sample_in_buf_cnt == 0) p_buf->base_timestamp = sys_ms_ticks;
 	
-	p_buf->raw_data[sample_in_buf_cnt].accel[0] = r_ax;
-	p_buf->raw_data[sample_in_buf_cnt].accel[1] = r_ay;
-	p_buf->raw_data[sample_in_buf_cnt].accel[2] = r_az;
-	p_buf->raw_data[sample_in_buf_cnt].gyro[0]  = r_gx;
-	p_buf->raw_data[sample_in_buf_cnt].gyro[1]  = r_gy;
-	p_buf->raw_data[sample_in_buf_cnt].gyro[2]  = r_gz;
+	p_buf->raw_data[sample_in_buf_cnt].accel[0] = g_imu_data.acc_x; 
+    p_buf->raw_data[sample_in_buf_cnt].accel[1] = g_imu_data.acc_y;
+    p_buf->raw_data[sample_in_buf_cnt].accel[2] = g_imu_data.acc_z;
+    p_buf->raw_data[sample_in_buf_cnt].gyro[0]  = g_imu_data.gyro_x;
+    p_buf->raw_data[sample_in_buf_cnt].gyro[1]  = g_imu_data.gyro_y;
+    p_buf->raw_data[sample_in_buf_cnt].gyro[2]  = g_imu_data.gyro_z;
 
 	// 10ms 和 20ms 记录姿态
 	if (sample_in_buf_cnt == 9 || sample_in_buf_cnt == 19)
@@ -90,74 +107,21 @@ void EXTI0_IRQHandler(void)
         LED_MPU = !LED_MPU; 
     }
 
-    // 发送读取指令给主循环
-    //g_mpu_read_ready = 1; 
-
 	//  核心计数：记录“传感器运行时间”
     sys_ms_ticks++; 
     // 4. 清除标志位
     EXTI->PR = 1 << 0;
 }	
-//外部中断1服务程序
-void EXTI1_IRQHandler(void)
-{
-	EXTI->PR=1<<1;  //清除LINE0上的中断标志位  
-	u16EXIT0Count++;
-	if(u16EXIT1Count>=50)
-	{
-		u16EXIT1Count = 0;
-	}
-	
-}
-//外部中断2服务程序
-void EXTI2_IRQHandler(void)
-{
-	delay_ms(10);	//消抖
-	if(KEY1==0)	  
-	{	 
 
-	}		 
-	EXTI->PR=1<<2;  //清除LINE2上的中断标志位  
-}
-//外部中断3服务程序
-void EXTI3_IRQHandler(void)
-{
-	delay_ms(10);	//消抖
-	if(KEY0==0)	 
-	{
-		LED_RAS = !LED_RAS;
-	}		 
-	EXTI->PR=1<<3;  //清除LINE3上的中断标志位  
-}
-//外部中断4服务程序
-void EXTI4_IRQHandler(void)
-{
-	delay_ms(10);	//消抖
-	if(KEY1==0)	 
-	{		
-		LED_RAS = !LED_RAS;
-	}		 
-	EXTI->PR=1<<4;  //清除LINE4上的中断标志位  
-}
-	   
 //外部中断初始化程序
 void EXTIX_Init(void)
 {
 	//KEY_Init(); 
-
 	RCC->AHB1ENR|=1<<1;     //使能PORTB时钟
 	GPIO_Set(GPIOB,PIN0|PIN1,GPIO_MODE_IN,0,0,GPIO_PUPD_PU);	//PB0~1设置上拉输入
 	
 	Ex_NVIC_Config(GPIO_B,0,FTIR); 	//下降沿触发 PB0
+	//Ex_NVIC_Config(GPIO_B, 0, RTIR);  // 上升沿触发，数据一产生立即进入 ISR
 	MY_NVIC_Init(0,0,EXTI0_IRQn,2);	//抢占2，子优先级3，组2
-	
-	Ex_NVIC_Config(GPIO_B,1,FTIR); 	//下降沿触发 PB1
-	//MY_NVIC_Init(2,3,EXTI1_IRQn,2);	//抢占2，子优先级3，组2
-
-	Ex_NVIC_Config(GPIO_E,3,FTIR); 	//下降沿触发 PE3
-	MY_NVIC_Init(2,3,EXTI3_IRQn,2);	//抢占2，子优先级3，组2
-
-	Ex_NVIC_Config(GPIO_E,4,FTIR); 	//下降沿触发 PE4
-	MY_NVIC_Init(2,4,EXTI4_IRQn,2);	//抢占2，子优先级3，组2
 }
 
