@@ -4,6 +4,7 @@
 #include "dma_uart1.h"
 #include "icm42688.h"
 #include "mahony.h"
+#include "mmc5603.h"
 //////////////////////////////////////////////////////////////////////////////////	
 // 定义一个结构体变量存放角度
 IMU_Angle_t current_angle;
@@ -26,13 +27,16 @@ extern float g_mag_x, g_mag_y, g_mag_z; // 主循环读到的校准后的磁力计数据
 u16 u16EXIT0Count,u16EXIT1Count;	
 
 volatile ICM_Data g_imu_data;
+static int mag_update_count = 0;
 ////////////////////////////////////////////////////////////////////////////////// 
 //外部中断0服务程序
 void EXTI0_IRQHandler(void)
 {
+	mag_update_count++;
 	uint32_t start_count, stop_count; // 用于记录 DWT 计数值
+	// --- 开始计时 ---
+    start_count = DWT->CYCCNT;
 	// 立即读取 MPU 数据
-	//int16_t r_gx, r_gy, r_gz, r_ax, r_ay, r_az;
 	ICM42688_ReadData((ICM_Data*)&g_imu_data);
 
 	float gx_rad = (float)g_imu_data.gyro_x / 16.4f * (3.1415926f / 180.0f);
@@ -42,20 +46,25 @@ void EXTI0_IRQHandler(void)
 	float acc_x_g = (float)g_imu_data.acc_x /16384.0f;
 	float acc_y_g = (float)g_imu_data.acc_y /16384.0f;
 	float acc_z_g = (float)g_imu_data.acc_z /16384.0f;
-	// --- 开始计时 ---
-    start_count = DWT->CYCCNT;
 
-	// 姿态解算 (Mahony 只有 1ms 积分，F407 开启 FPU 后仅需约 50us)
-	// AHRS_Update_9axis(gx_rad, gy_rad, gz_rad, 
-	//                acc_x_g, acc_y_g, acc_z_g, 
-	//                g_mag_x, g_mag_y, g_mag_z, 0.001f);
+	if(mag_update_count >= 20)
+	{
+		mag_update_count = 0;
+		MMC5603_ReadData(&g_mag_x, &g_mag_y, &g_mag_z);
+		// 姿态解算 (Mahony 只有 1ms 积分，F407 开启 FPU 后仅需约 50us)
+		AHRS_Update_9axis(gx_rad, gy_rad, gz_rad, 
+		               acc_x_g, acc_y_g, acc_z_g, 
+		               g_mag_x, g_mag_y, g_mag_z, 0.001f);
 
-	// AHRS_Update_9axis(gx_rad, gy_rad, gz_rad, 
-	//                acc_x_g, acc_y_g, acc_z_g, 
-	//                0, 0, 0, 0.001f);
+		// AHRS_Update_9axis(gx_rad, gy_rad, gz_rad, 
+		// 					acc_x_g, acc_y_g, acc_z_g, 
+		// 					-g_mag_y, g_mag_x, g_mag_z, 0.001f);	
+	}else{
+		AHRS_Update_6axis(gx_rad, gy_rad, gz_rad,
+					  		acc_x_g, acc_y_g, acc_z_g, 0.001f);
+	}	
 
-	AHRS_Update_6axis(gx_rad, gy_rad, gz_rad,
-					  acc_x_g, acc_y_g, acc_z_g, 0.001f);
+	AHRS_GetEulerAngle(&current_angle);
 
 	// --- 结束计时 ---
     stop_count = DWT->CYCCNT;
@@ -72,11 +81,16 @@ void EXTI0_IRQHandler(void)
     p_buf->raw_data[sample_in_buf_cnt].gyro[1]  = g_imu_data.gyro_y;
     p_buf->raw_data[sample_in_buf_cnt].gyro[2]  = g_imu_data.gyro_z;
 
+	p_buf->raw_data[sample_in_buf_cnt].mag[0] = g_mag_x*1000; 
+    p_buf->raw_data[sample_in_buf_cnt].mag[1] = g_mag_y*1000;
+    p_buf->raw_data[sample_in_buf_cnt].mag[2] = g_mag_z*1000;
+    
+	
 	// 10ms 和 20ms 记录姿态
 	if (sample_in_buf_cnt == 9 || sample_in_buf_cnt == 19)
 	{
 		uint8_t c_idx = (sample_in_buf_cnt == 19) ? 1 : 0;
-		AHRS_GetEulerAngle(&current_angle);
+		//AHRS_GetEulerAngle(&current_angle);
 		p_buf->ctrl_info[c_idx].euler[0] = current_angle.roll;
 		p_buf->ctrl_info[c_idx].euler[1] = current_angle.pitch;
 		p_buf->ctrl_info[c_idx].euler[2] = current_angle.yaw;

@@ -6,9 +6,7 @@
 // 比例增益 (Kp)
 #define MAHONY_KP_DEF  (2.0f * 5.0f) 
 // 积分增益 (Ki)
-#define MAHONY_KI_DEF  0.005f
-
-#define MAG_INCLINATION_DEG  54.0f  // 西安磁倾角 2026年
+#define MAHONY_KI_DEF  0.01f
 // ================= 数据结构 =================
 // 用于存储解算后的欧拉角 (单位：度)
 typedef struct {
@@ -31,7 +29,7 @@ void AHRS_Init(void);
 // @param mx, my, mz : 磁力计数据 (单位：Gauss 或 原始值)
 // @param dt         : 时间间隔 (单位：s)
 //-------------------------------------------------
-void AHRS_Update_9axis(float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz, float dt);
+void AHRS_Update_9axis(float gx, float gy, float gz, float ax, float ay, float az, float mx_raw, float my_raw, float mz_raw, float dt);
 
 void AHRS_Update_6axis(float gx, float gy, float gz, float ax, float ay, float az,float dt);
 
@@ -46,6 +44,9 @@ void AHRS_GetEulerAngle(IMU_Angle_t *angle);
 // @param get_gyro_raw_func: 外部提供的读取原始数据的函数指针 (单位: rad/s)
 //-------------------------------------------------
 void AHRS_Calibrate(void);
+
+static void AHRS_SetInitialQuaternion(float roll, float pitch, float yaw);
+void AHRS_Init_Fast(float ax, float ay, float az, float mx, float my, float mz);
 
 
 #endif /* __MAHONY_H__ */

@@ -22,6 +22,7 @@ typedef struct
 {
     int16_t accel[3];
     int16_t gyro[3];
+    int16_t mag[3];
 } RawSample_t; // 12 bytes
 
 // 10ms 控制状态反馈
@@ -57,6 +58,7 @@ typedef struct {
 
 #pragma pack()// 恢复默认对齐方式
 
-void EXTIX_Init(void);	//外部中断初始化		 					    
+void EXTIX_Init(void);	//外部中断初始化		
+ 					    
 #endif
 

@@ -4,6 +4,7 @@
 #include "icm42688.h"
 #include "mmc5603.h"
 #include <string.h>        // 用于 memset (修复了之前的 >> 错误)
+#include <math.h>
 // ================= 私有变量 =================
 static volatile float twoKp = MAHONY_KP_DEF; 
 static volatile float twoKi = MAHONY_KI_DEF;
@@ -11,13 +12,8 @@ static volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;
 static volatile float integralFBx = 0.0f, integralFBy = 0.0f, integralFBz = 0.0f;
 
 static volatile float gyro_bias[3] = {0.0f, 0.0f, 0.0f};
-static float mag_bias[3] = {-0.164917f, 0.040692f, -0.647417f};
-static volatile int is_calibrated = 0;
-
-// 磁场参考方向（西安地区磁倾角 ≈54°）
-static float mag_bx = 0.5878f;  // cos(54°)
-static float mag_bz = 0.8090f;  // sin(54°)
-
+//static float mag_bias[3] = {-0.164917f, 0.040692f, -0.647417f};
+static float mag_bias[3] = {0.0f, 0.0f, 0.0f};
 // ================= 内部辅助函数 =================
 static float invSqrt(float x) 
 {
@@ -39,124 +35,98 @@ void AHRS_Init(void)
     twoKi = MAHONY_KI_DEF;
     q0 = 1.0f; q1 = 0.0f; q2 = 0.0f; q3 = 0.0f;
     integralFBx = 0.0f; integralFBy = 0.0f; integralFBz = 0.0f;
-
-    // 计算磁倾角参考方向（西安 54°）
-    float mag_inclination_rad = MAG_INCLINATION_DEG * 3.141592653589793f / 180.0f;
-    mag_bx = cosf(mag_inclination_rad);
-    mag_bz = sinf(mag_inclination_rad);
 }
 
 // 核心更新函数
-void AHRS_Update_9axis(float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz, float dt)
+void AHRS_Update_9axis(float gx, float gy, float gz, float ax, float ay, float az, float mx_raw, float my_raw, float mz_raw, float dt)
 {
     float recipNorm;
     float q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3, q3q3;
+    float hx, hy, hz, bx, bz;
     float vx, vy, vz, wx, wy, wz;
-    float ex, ey, ez;
+    float ex = 0.0f, ey = 0.0f, ez = 0.0f;
 
-    int useMag = 0;
+    // 1. 先扣除偏置 (确保与 Update 一致)
+    float mx_adj = mx_raw - mag_bias[0];
+    float my_adj = my_raw - mag_bias[1];
+    float mz_adj = mz_raw - mag_bias[2];
 
-    // 扣除陀螺仪零偏
-    if (is_calibrated) {
-        gx -= gyro_bias[0];
-        gy -= gyro_bias[1];
-        gz -= gyro_bias[2];
-    }
+    // 2. 唯一映射 (IMU_X = -Mag_Y, IMU_Y = Mag_X)
+    float mx = -my_adj; 
+    float my = mx_adj;
+    float mz = mz_adj;
 
-    mx -= mag_bias[0];
-    my -= mag_bias[1];
-    mz -= mag_bias[2];
+    // 1. 扣除陀螺仪零偏 (确保 bias 单位与 gx,gy,gz 一致)
+    // 如果 gx 是 rad/s，bias 也必须是 rad/s
+    gx -= gyro_bias[0];
+    gy -= gyro_bias[1];
+    gz -= gyro_bias[2];
 
-    // 传感器异常过滤
-    if (fabsf(ax) > 40000.0f || fabsf(ay) > 40000.0f || fabsf(az) > 40000.0f ||
-        fabsf(ax) < 1000.0f && fabsf(ay) < 1000.0f && fabsf(az) < 1000.0f) {  // 防止全小（如自由落体）
-        return;  // 直接跳过此帧
-    }
-    if (fabsf(gx) > 1000.0f || fabsf(gy) > 1000.0f || fabsf(gz) > 1000.0f) {
-        return;  // Gyro野值过滤
-    }
-
-    // 加速度归一化
-    recipNorm = invSqrt(ax * ax + ay * ay + az * az);
-    if (recipNorm < 1e-6f) return;
-    ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
-
-    // 磁力计归一化
-    float mag_norm_sq = mx * mx + my * my + mz * mz;
-    if (mag_norm_sq < 1e-6f) {
-        useMag = 0;
-    } else {
-        recipNorm = invSqrt(mag_norm_sq);
-        mx *= recipNorm; my *= recipNorm; mz *= recipNorm;
-    }
-
-    // 辅助变量
+    // 2. 预计算四元数乘积
     q0q0 = q0 * q0; q0q1 = q0 * q1; q0q2 = q0 * q2; q0q3 = q0 * q3;
     q1q1 = q1 * q1; q1q2 = q1 * q2; q1q3 = q1 * q3;
     q2q2 = q2 * q2; q2q3 = q2 * q3; q3q3 = q3 * q3;
 
-    // 重力参考方向
-    vx = 2.0f * (q1q3 - q0q2);
-    vy = 2.0f * (q0q1 + q2q3);
-    vz = q0q0 - q1q1 - q2q2 + q3q3;
+    // 3. 加速度计处理：修正 Pitch 和 Roll
+    float a_norm_sq = ax * ax + ay * ay + az * az;
+    if (a_norm_sq > 0.001f) {
+        recipNorm = invSqrt(a_norm_sq);
+        ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
 
-    // 磁场参考方向（正确使用磁倾角）
-    if (useMag) {
-        wx = 2.0f * (mag_bx * (0.5f - q2q2 - q3q3) + mag_bz * (q1q3 - q0q2));
-        wy = 2.0f * (mag_bx * (q1q2 - q0q3) + mag_bz * (q0q1 + q2q3));
-        wz = 2.0f * (mag_bx * (q1q3 + q0q2) + mag_bz * (0.5f - q1q1 - q2q2));
+        vx = 2.0f * (q1q3 - q0q2);
+        vy = 2.0f * (q0q1 + q2q3);
+        vz = q0q0 - q1q1 - q2q2 + q3q3;
+
+        ex = (ay * vz - az * vy);
+        ey = (az * vx - ax * vz);
+        ez = (ax * vy - ay * vx);
     }
 
-    // 误差叉积
-    ex = (ay * vz - az * vy);
-    ey = (az * vx - ax * vz);
-    ez = (ax * vy - ay * vx);
-
-    if (useMag) 
+    // 4. 磁力计处理：修正 Yaw (这是解决漂移的关键)
+    float m_norm_sq = mx * mx + my * my + mz * mz;
+    if (m_norm_sq > 0.001f) 
     {
-        ex += 0.15f * (my * wz - mz * wy);  // 原为 1.0，降到 0.1~0.3
-        ey += 0.15f * (mz * wx - mx * wz);
-        ez += 0.15f * (mx * wy - my * wx);
+        recipNorm = invSqrt(m_norm_sq);
+        mx *= recipNorm; my *= recipNorm; mz *= recipNorm;
+
+        // 将测量磁场转到地理坐标系 (h = q * m * q')
+        hx = 2.0f * (mx * (0.5f - q2q2 - q3q3) + my * (q1q2 - q0q3) + mz * (q1q3 + q0q2));
+        hy = 2.0f * (mx * (q1q2 + q0q3) + my * (0.5f - q1q1 - q3q3) + mz * (q2q3 - q0q1));
+        hz = 2.0f * (mx * (q1q3 - q0q2) + my * (q2q3 + q0q1) + mz * (0.5f - q1q1 - q2q2));
+        
+        bx = sqrtf(hx * hx + hy * hy);
+        bz = hz;
+
+        // 将地理参考磁场转回机体坐标系 (w = q' * b * q)
+        wx = 2.0f * (bx * (0.5f - q2q2 - q3q3) + bz * (q1q3 - q0q2));
+        wy = 2.0f * (bx * (q1q2 - q0q3) + bz * (q0q1 + q2q3));
+        wz = 2.0f * (bx * (q1q3 + q0q2) + bz * (0.5f - q1q1 - q2q2));
+
+        // 累加磁场误差项
+        ex += (my * wz - mz * wy);
+        ey += (mz * wx - mx * wz);
+        ez += (mx * wy - my * wx);
     }
 
-    // PI 控制
+    // 5. PI 控制
     if (twoKi > 0.0f) {
         integralFBx += twoKi * ex * dt;
         integralFBy += twoKi * ey * dt;
         integralFBz += twoKi * ez * dt;
-
-        // 积分限幅
-        if (fabsf(integralFBx) > 1.0f) integralFBx = 0.0f;
-        if (fabsf(integralFBy) > 1.0f) integralFBy = 0.0f;
-        if (fabsf(integralFBz) > 1.0f) integralFBz = 0.0f;
-
-        gx += twoKp * ex + integralFBx;
-        gy += twoKp * ey + integralFBy;
-        gz += twoKp * ez + integralFBz;
-    } else {
-        gx += twoKp * ex;
-        gy += twoKp * ey;
-        gz += twoKp * ez;
+        gx += integralFBx; gy += integralFBy; gz += integralFBz;
     }
+    gx += twoKp * ex;
+    gy += twoKp * ey;
+    gz += twoKp * ez;
 
-    // 四元数积分
-    gx *= 0.5f * dt;
-    gy *= 0.5f * dt;
-    gz *= 0.5f * dt;
+    // 6. 积分并归一化
+    float dq0 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz) * dt;
+    float dq1 = 0.5f * ( q0 * gx + q2 * gz - q3 * gy) * dt;
+    float dq2 = 0.5f * ( q0 * gy - q1 * gz + q3 * gx) * dt;
+    float dq3 = 0.5f * ( q0 * gz + q1 * gy - q2 * gx) * dt;
+    q0 += dq0; q1 += dq1; q2 += dq2; q3 += dq3;
 
-    float qa = q0, qb = q1, qc = q2;
-    q0 += (-qb * gx - qc * gy - q3 * gz);
-    q1 += (qa * gx + qc * gz - q3 * gy);
-    q2 += (qa * gy - qb * gz + q3 * gx);
-    q3 += (qa * gz + qb * gy - qc * gx);
-
-    // 四元数归一化 + 防崩溃
-    float norm_sq = q0*q0 + q1*q1 + q2*q2 + q3*q3;
-    if (norm_sq < 1e-6f || isnan(norm_sq)) {
-        q0 = 1.0f; q1 = q2 = q3 = 0.0f;
-        return;
-    }
-    recipNorm = invSqrt(norm_sq);
+    recipNorm = invSqrt(q0*q0 + q1*q1 + q2*q2 + q3*q3);
     q0 *= recipNorm; q1 *= recipNorm; q2 *= recipNorm; q3 *= recipNorm;
 }
 // 核心更新函数
@@ -168,11 +138,10 @@ void AHRS_Update_6axis(float gx, float gy, float gz, float ax, float ay, float a
     float qa, qb, qc;
 
     // 应用校准值
-    if(is_calibrated) {
-        gx -= gyro_bias[0];
-        gy -= gyro_bias[1];
-        gz -= gyro_bias[2];
-    }
+    gx -= gyro_bias[0];
+    gy -= gyro_bias[1];
+    gz -= gyro_bias[2];
+
     //  静态死区过滤 (防止极小的噪声引起积分漂移)
     // 对于 MPU6500，0.005 rad/s 是一个比较保守的阈值
     if(fabs(gx) < 0.005f) gx = 0.0f;
@@ -258,23 +227,110 @@ void AHRS_Calibrate(void)
 {
     ICM_Data raw_data; 
     float gx, gy, gz;
-    float sum[3] = {0.0f, 0.0f, 0.0f};
+    float ax, ay, az;
+    float mx, my, mz;
+
+    float ax_cal = 0.0f, ay_cal = 0.0f, az_cal = 0.0f;
+    float mx_cal = 0.0f, my_cal = 0.0f, mz_cal = 0.0f;
+
+    float sum_g[3] = {0.0f, 0.0f, 0.0f};
+    float sum_a[3] = {0.0f, 0.0f, 0.0f};
+    float sum_m[3] = {0.0f, 0.0f, 0.0f};
     const int sample_count = 1000;
     
-    const float lsb_to_rads = (1.0f / 16.4f) * (3.141592653589793f / 180.0f);
+    const float gy_lsb_to_rads = (1.0f / 16.4f) * (3.141592653589793f / 180.0f);
+    const float acc_lsb_to_g = (1.0f / 16384.0f); // ±2g range
     
     for(int i = 0; i < sample_count; i++) 
     {
         ICM42688_ReadData(&raw_data);
-        gx = (float)raw_data.gyro_x * lsb_to_rads;
-        gy = (float)raw_data.gyro_y * lsb_to_rads;
-        gz = (float)raw_data.gyro_z * lsb_to_rads;
-        sum[0] += gx; sum[1] += gy; sum[2] += gz;
-        delay_ms(1); 
+        gx = (float)raw_data.gyro_x * gy_lsb_to_rads;
+        gy = (float)raw_data.gyro_y * gy_lsb_to_rads;
+        gz = (float)raw_data.gyro_z * gy_lsb_to_rads;
+        sum_g[0] += gx; sum_g[1] += gy; sum_g[2] += gz;
+
+        ax = (float)raw_data.acc_x * acc_lsb_to_g;
+        ay = (float)raw_data.acc_y * acc_lsb_to_g;  
+        az = (float)raw_data.acc_z * acc_lsb_to_g;
+        sum_a[0] += ax; sum_a[1] += ay; sum_a[2] += az;
+
+        MMC5603_ReadData(&mx, &my, &mz);
+        sum_m[0] += mx; sum_m[1] += my; sum_m[2] += mz;
+
+        delay_ms(5); 
     }
-    
-    gyro_bias[0] = sum[0] / sample_count;
-    gyro_bias[1] = sum[1] / sample_count;
-    gyro_bias[2] = sum[2] / sample_count;
-    is_calibrated = 1;
+
+    gyro_bias[0] = sum_g[0] / sample_count;
+    gyro_bias[1] = sum_g[1] / sample_count;
+    gyro_bias[2] = sum_g[2] / sample_count;
+
+    ax_cal = sum_a[0] / sample_count;
+    ay_cal = sum_a[1] / sample_count;
+    az_cal = sum_a[2] / sample_count;
+
+    mx_cal = sum_m[0] / sample_count;
+    my_cal = sum_m[1] / sample_count;
+    mz_cal = sum_m[2] / sample_count;
+
+    AHRS_Init_Fast(ax_cal, ay_cal, az_cal, mx_cal, my_cal, mz_cal);
 }
+// 静态辅助函数：欧拉角转四元数初始化
+static void AHRS_SetInitialQuaternion(float roll, float pitch, float yaw) 
+{
+    float cr = cosf(roll * 0.5f);
+    float sr = sinf(roll * 0.5f);
+    float cp = cosf(pitch * 0.5f);
+    float sp = sinf(pitch * 0.5f);
+    float cy = cosf(yaw * 0.5f);
+    float sy = sinf(yaw * 0.5f);
+
+    q0 = cr * cp * cy + sr * sp * sy;
+    q1 = sr * cp * cy - cr * sp * sy;
+    q2 = cr * sp * cy + sr * cp * sy;
+    q3 = cr * cp * sy - sr * sp * cy;
+}
+
+//------------------------------------------------------------
+//  @brief 快速对准初始化 (消除启动爬升曲线)
+//  @param ax, ay, az : 初始加速度
+//  @param mx, my, mz : 初始磁力计 (Gauss)
+//------------------------------------------------------------
+void AHRS_Init_Fast(float ax, float ay, float az, float mx, float my, float mz) 
+{
+    // 1. 重置积分项
+    integralFBx = 0.0f; integralFBy = 0.0f; integralFBz = 0.0f;
+
+    // 1. 先扣除偏置 (确保与 Update 一致)
+    float mx_adj = mx - mag_bias[0];
+    float my_adj = my - mag_bias[1];
+    float mz_adj = mz - mag_bias[2];
+
+    // 2. 唯一映射 (IMU_X = -Mag_Y, IMU_Y = Mag_X)
+    float mx_imu = -my_adj; 
+    float my_imu = mx_adj;
+    float mz_imu = mz_adj;
+
+    // 2. 加速度计归一化
+    float norm = sqrtf(ax * ax + ay * ay + az * az);
+    if (norm < 1e-6f) return;
+    ax /= norm; ay /= norm; az /= norm;
+
+    // 3. 计算初始 Roll 和 Pitch (基于重力矢量)
+    float initialRoll = atan2f(ay, az);
+    float initialPitch = asinf(-ax);
+
+    // 5. 倾斜补偿 (计算初始 Yaw)
+    float cosRoll = cosf(initialRoll);
+    float sinRoll = sinf(initialRoll);
+    float cosPitch = cosf(initialPitch);
+    float sinPitch = sinf(initialPitch);
+
+    float mag_x = mx_imu * cosPitch + my_imu * sinRoll * sinPitch + mz_imu * cosRoll * sinPitch;
+    float mag_y = my_imu * cosRoll - mz_imu * sinRoll;
+    float initialYaw = atan2f(-mag_y, mag_x);
+
+    // 6. 将计算结果直接赋值给四元数
+    AHRS_SetInitialQuaternion(initialRoll, initialPitch, initialYaw);
+}
+
+

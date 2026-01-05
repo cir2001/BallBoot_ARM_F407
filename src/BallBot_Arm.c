@@ -11,12 +11,12 @@
 //		2. USART1,USART2,USART3同时使用
 //		3. mpu6500 DMP V6.12 移植 对内容进行了针对stm32F407的修改
 //		   模拟I2C通讯方式 如果MPU初始化无法正确读出地址值，考虑连接线屏蔽问题
-//		   采用绞线方式连接
+//		   采用绞线方式连接（硬件I2C MMC5603磁力计）
 //		4. TIM8的CH1~CH4通道输出PWM波，驱动电机 （减速电机方案，暂未使用）
 //		5. TIM2,TIM3，TIM4,TIM5作为编码器接口使用 （减速电机方案，暂未使用）
 //		6. CAN总线通讯，波特率500Kbps
 //		7. FreeRTOS实时操作系统移植
-//   	8. 预留SPI1接口，可连接树莓派等主控
+//   	8. 预留SPI1接口，可连接树莓派等主控（ICM42688接口）
 //  	9. TIM1作为中断定时器使用 （减速电机方案，暂未使用）
 // 		10.KEY按键扫描
 //*****************************************************************	
@@ -25,18 +25,25 @@
 //	2025-12-02   	初始化
 //  2025-12-17      PlatformIO 移植
 //  2025-12-17      F407 F103 联机测试 串口2接收指令，下发3个F103，指令格式: #S+20000,-20000,+20000.
+//  2026-01-05      姿态传感器ICM42688+MMC5603C初始化及校准代码 MMC5603采用硬件I2C连接,ICM42688采用硬件SPI连接
+//                  
 //*****************************************************************
 //==== 引脚连接表 ============
-//---- MPU6500 ----------
-//	mpu6500（I2C）				stm32f407(模拟I2C)
+//---- MMC5603 ----------
+//	MMC5603C（I2C2）			stm32f407(硬件I2C2)
 //		3.3v					3.3v
 //		GND						GND
 //		SCL						PB10(I2C2)	PB8(I2C1)	PB6
 //		SDA						PB11(I2C2)	PB9(I2C1)	PB7 
-//		AD0/SDO					GND(addr 0x70)
+//---- ICM42688 ----------
+//	ICM42688（SPI1）			stm32f407(硬件SPI1)
+//		3.3v					3.3v
+//		GND						GND
+//		SCK	（SPI时钟线）		SPI1_SCK		 PA5
+//		MOSI（SPI数据线）		SPI1_MOSI		 PA7
+//		MISO（SPI数据线）		SPI1_MISO		 PA6
+//		CS   (片选)				SPI1_NSS		 PA4
 //		INT1					PB0(EXIT0)
-//    	INT2					PB1(EXIT1)
-// 		FSYNC					PB2
 //---- 0.96寸 OLED --------
 //	0.96寸OLED(SD1306)			stm32f407(软件模拟SPI)
 //		GND										GND
@@ -49,32 +56,9 @@
 //----- CAN1 总线 -------
 //		CAN_TX					PA12
 //		CAN_RX					PA11
-//-------- 电机驱动  减速电机方案（暂未使用）---------------------------
-//		Motor A PWM Out		TIM8_CH1		PC6
-//		Motor B PWM Out		TIM8_CH2		PC7
-//		Motor C PWM Out		TIM8_CH3		PC8
-//		Motor D PWM Out		TIM8_CH4		PC9
-//----- 编码器接口 -------
-//		Motor A Encoder B			TIM2_CH1		PA15
-//		Motor A Encoder A			TIM2_CH2		PB3
-//		Motor B Encoder B			TIM3_CH1		PB4
-//		Motor B Encoder A			TIM3_CH2		PB5
-//      Motor C Encoder B			TIM4_CH1		PB6
-//		Motor C Encoder A			TIM4_CH2		PB7
-//		Motor D Encoder B			TIM5_CH1		PA0
-//		Motor D Encoder A			TIM5_CH2		PA1
-//----- 电机方向 -------
-//		Motor A AIN2			PC10
-//		Motor A AIN1			PC11
-//		Motor B BIN1			PC12
-//		Motor B BIN2			PD0
-//		Motor C AIN2			PB8
-//		Motor C AIN1			PB9
-//		Motor D BIN1			PE0
-//		Motor D BIN2			PE1
 //---------------- USART接口  --------------------------------------- 
-//--- ESP-01S  DMA方式 ---
-//	UART1   115200，1start，8bit，1stop，no parity 
+//--- ESP32-WROOM-32E  DMA方式 独立供电---
+//	UART1   921600，1start，8bit，1stop，no parity 
 //		USART1_TX			PA9
 //		USART1_RX			PA10
 //--- 中断方式 ---
@@ -85,11 +69,6 @@
 // 	UART3   115200，1start，8bit，1stop，no parity 
 //		USART3_TX			PD8
 //		USART3_RX			PD9
-//-------------- 树莓派SPI接口 ---------------------------------------
-//  	SPI1_MOSI           PA7
-// 	 	SPI1_MISO           PA6
-//  	SPI1_SCK            PA5
-//  	SPI1_NSS            PA4
 //=========================================================
 //说明：
 //====LED===============================================
@@ -227,10 +206,28 @@ int main(void)
     OLED_Clear();
     OLED_ShowString(0, 0,(u8*)"System Booting..  ", 16);
     OLED_Refresh_Gram(); // 第一次刷新
-    delay_ms(3000); // 保持 2 秒
+    delay_ms(2000); // 保持 2 秒
 
-    
     // --- 初始化传感器，但不开启定时器发送 ---
+    //---- MMC5603 ----
+    OLED_ShowString(0, 16, (u8*)"Init IMU MMC   ", 16);
+    OLED_Refresh_Gram();
+    delay_ms(1000); // 保持 2 秒
+    if(MMC5603_Init() == 0) 
+    {
+        OLED_ShowString(0, 16, (u8*)"MMC Failed!   ", 16);
+        OLED_Refresh_Gram();
+        delay_ms(1000);
+        // 如果初始化失败，让一个 LED 长亮或快闪报警
+        while(1) { LED_MA = !LED_MA; delay_ms(100); }
+    }else if(MMC5603_Init() == 1)
+    {
+        // 执行校准 (此时必须保证板子静止！)
+        OLED_ShowString(0, 16, (u8*)"MMC Success!  ", 16);
+        OLED_Refresh_Gram();
+        delay_ms(1000);
+    }
+    //---- ICM42688 ----
     OLED_ShowString(0, 16, (u8*)"Init IMU ICM  ", 16);
     OLED_Refresh_Gram();
     delay_ms(2000); // 保持 2 秒
@@ -249,29 +246,11 @@ int main(void)
         delay_ms(1000);
         OLED_ShowString(0, 16, (u8*)"Calibrate..  ", 16);
         OLED_Refresh_Gram();
-        delay_ms(500); // 保持 1 秒
+        delay_ms(500); 
         // --- 初始化 AHRS 算法 ---
-        AHRS_Init();
+        //AHRS_Init();
         AHRS_Calibrate(); // 启动时自动校准，需保持机器人静止
         OLED_ShowString(0, 16, (u8*)"ICM Done!   ", 16);
-        OLED_Refresh_Gram();
-        delay_ms(1000);
-    }
-
-    OLED_ShowString(0, 16, (u8*)"Init IMU MMC   ", 16);
-    OLED_Refresh_Gram();
-    delay_ms(2000); // 保持 2 秒
-    if(MMC5603_Init() == 0) 
-    {
-        OLED_ShowString(0, 16, (u8*)"MMC Failed!   ", 16);
-        OLED_Refresh_Gram();
-        delay_ms(1000);
-        // 如果初始化失败，让一个 LED 长亮或快闪报警
-        while(1) { LED_MA = !LED_MA; delay_ms(100); }
-    }else if(MMC5603_Init() == 1)
-    {
-        // 执行校准 (此时必须保证板子静止！)
-        OLED_ShowString(0, 16, (u8*)"MMC Success!  ", 16);
         OLED_Refresh_Gram();
         delay_ms(1000);
     }
@@ -296,11 +275,6 @@ int main(void)
     delay_ms(500); // 保持 1 秒
     CAN1_Mode_Init();
     delay_ms(100); // 等待 CAN 初始化完成
-
-	//--- 初始化 ESP-01S ---
-    //OLED_ShowString(0, 16, (u8*)"Init ESP...", 16);
-    //OLED_Refresh_Gram();
-    //ESP01S_Init_UDP();
 
 	// 初始化 TIM1，设定为 200ms 中断一次
 	// 参数1 (ARR): 1999  -> 计数 2000 次
@@ -341,7 +315,7 @@ int main(void)
     EXTIX_Init();
 
     OLED_Clear();
-    OLED_ShowString(0, 0, (u8*)"System Online    ", 16);
+    OLED_ShowString(0, 0, (u8*)"System Online... ", 16);
     OLED_Refresh_Gram(); // 刷新
     delay_ms(1000);
     //--- OLED 进入主界面 ---

@@ -18,8 +18,7 @@
 
 u8 MMC5603_Init(void);
 void MMC5603_ReadData(float *mx, float *my, float *mz);
-u8 I2C_Write_Byte(u8 reg, u8 data);
-u8 MMC5603_Read_Reg(u8 reg); // 读取寄存器值
+
  				    
 #endif
 
