@@ -5,6 +5,8 @@
 #include "mmc5603.h"
 #include <string.h>        // 用于 memset (修复了之前的 >> 错误)
 #include <math.h>
+#include "madgwick.h"
+#include "exti.h"
 // ================= 私有变量 =================
 static volatile float twoKp = MAHONY_KP_DEF; 
 static volatile float twoKi = MAHONY_KI_DEF;
@@ -33,19 +35,31 @@ static float invSqrt(float x)
     
     return y;
 }
-// ================= 接口函数实现 =================
+// 静态辅助函数：欧拉角转四元数初始化
+static void Mahony_SetInitialQuaternion(float roll, float pitch, float yaw) 
+{
+    float cr = cosf(roll * 0.5f);
+    float sr = sinf(roll * 0.5f);
+    float cp = cosf(pitch * 0.5f);
+    float sp = sinf(pitch * 0.5f);
+    float cy = cosf(yaw * 0.5f);
+    float sy = sinf(yaw * 0.5f);
 
+    q0 = cr * cp * cy + sr * sp * sy;
+    q1 = sr * cp * cy - cr * sp * sy;
+    q2 = cr * sp * cy + sr * cp * sy;
+    q3 = cr * cp * sy - sr * sp * cy;
+}
+// ================= 接口函数实现 =================
 // 初始化函数
-void AHRS_Init(void)
+void Mahony_Init(void)
 {
     twoKp = MAHONY_KP_DEF;
     twoKi = MAHONY_KI_DEF;
-    q0 = 1.0f; q1 = 0.0f; q2 = 0.0f; q3 = 0.0f;
-    integralFBx = 0.0f; integralFBy = 0.0f; integralFBz = 0.0f;
 }
 
 // 核心更新函数
-void AHRS_Update_9axis(float gx, float gy, float gz, float ax, float ay, float az, float mx_raw, float my_raw, float mz_raw, float dt)
+void Mahony_Update_9axis(float gx, float gy, float gz, float ax, float ay, float az, float mx_raw, float my_raw, float mz_raw, float dt)
 {
     float recipNorm;
     float q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3, q3q3;
@@ -76,6 +90,12 @@ void AHRS_Update_9axis(float gx, float gy, float gz, float ax, float ay, float a
 
     // 3. 加速度计处理：修正 Pitch 和 Roll
     float a_norm_sq = ax * ax + ay * ay + az * az;
+    // 如果模长太小（例如小于 0.0001，意味着几乎为0），则跳过本次重力修正
+    if (a_norm_sq < 1e-6f) {
+    // 传感器数据无效，只进行陀螺仪积分，或者直接返回
+    return; 
+    }
+
     if (a_norm_sq > 0.001f) {
         recipNorm = invSqrt(a_norm_sq);
         ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
@@ -137,7 +157,7 @@ void AHRS_Update_9axis(float gx, float gy, float gz, float ax, float ay, float a
     q0 *= recipNorm; q1 *= recipNorm; q2 *= recipNorm; q3 *= recipNorm;
 }
 // 核心更新函数
-void AHRS_Update_6axis(float gx, float gy, float gz, float ax, float ay, float az, float dt)
+void Mahony_Update_6axis(float gx, float gy, float gz, float ax, float ay, float az, float dt)
 {
     float recipNorm;
     float halfvx, halfvy, halfvz;
@@ -151,18 +171,16 @@ void AHRS_Update_6axis(float gx, float gy, float gz, float ax, float ay, float a
 
     //  静态死区过滤 (防止极小的噪声引起积分漂移)
     // 对于 MPU6500，0.005 rad/s 是一个比较保守的阈值
-    if(fabs(gx) < 0.005f) gx = 0.0f;
-    if(fabs(gy) < 0.005f) gy = 0.0f;
-    if(fabs(gz) < 0.005f) gz = 0.0f;
+    if(fabs(gx) < 0.002f) gx = 0.0f;
+    if(fabs(gy) < 0.002f) gy = 0.0f;
+    if(fabs(gz) < 0.002f) gz = 0.0f;
 
     // 1. 如果加速度计数据无效（全0），则无法修正，直接返回
     if(!((ax != 0.0f) && (ay != 0.0f) && (az != 0.0f))) return;
 
     // 2. 加速度数据归一化
     recipNorm = invSqrt(ax * ax + ay * ay + az * az);
-    ax *= recipNorm;
-    ay *= recipNorm;
-    az *= recipNorm;
+    ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
 
     // 3. 估计重力方向
     halfvx = q1 * q3 - q0 * q2;
@@ -197,9 +215,7 @@ void AHRS_Update_6axis(float gx, float gy, float gz, float ax, float ay, float a
     gx *= (0.5f * dt);
     gy *= (0.5f * dt);
     gz *= (0.5f * dt);
-    qa = q0;
-    qb = q1;
-    qc = q2;
+    qa = q0; qb = q1; qc = q2;
     q0 += (-qb * gx - qc * gy - q3 * gz);
     q1 += (qa * gx + qc * gz - q3 * gy);
     q2 += (qa * gy - qb * gz + q3 * gx);
@@ -207,13 +223,10 @@ void AHRS_Update_6axis(float gx, float gy, float gz, float ax, float ay, float a
 
     // 8. 四元数归一化
     recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
-    q0 *= recipNorm;
-    q1 *= recipNorm;
-    q2 *= recipNorm;
-    q3 *= recipNorm;
+    q0 *= recipNorm; q1 *= recipNorm; q2 *= recipNorm; q3 *= recipNorm;
 }
 // 获取欧拉角
-void AHRS_GetEulerAngle(IMU_Angle_t *angle)
+void Mahony_GetEulerAngle(IMU_Angle_t *angle)
 {
     if (angle == NULL || isnan(q0 + q1 + q2 + q3)) {
         angle->pitch = angle->roll = angle->yaw = 0.0f;
@@ -230,7 +243,7 @@ void AHRS_GetEulerAngle(IMU_Angle_t *angle)
 }
 
 // 陀螺仪校准
-void AHRS_Calibrate(void)
+void Mahony_Calibrate(void)
 {
     ICM_Data raw_data; 
     float gx, gy, gz;
@@ -240,9 +253,9 @@ void AHRS_Calibrate(void)
     float ax_cal = 0.0f, ay_cal = 0.0f, az_cal = 0.0f;
     float mx_cal = 0.0f, my_cal = 0.0f, mz_cal = 0.0f;
 
-    float sum_g[3] = {0.0f, 0.0f, 0.0f};
-    float sum_a[3] = {0.0f, 0.0f, 0.0f};
-    float sum_m[3] = {0.0f, 0.0f, 0.0f};
+    double sum_g[3] = {0.0f, 0.0f, 0.0f};
+    double sum_a[3] = {0.0f, 0.0f, 0.0f};
+    
     const int sample_count = 1000;
     
     const float gy_lsb_to_rads = (1.0f / 16.4f) * (3.141592653589793f / 180.0f);
@@ -261,11 +274,10 @@ void AHRS_Calibrate(void)
         az = (float)raw_data.acc_z * acc_lsb_to_g;
         sum_a[0] += ax; sum_a[1] += ay; sum_a[2] += az;
 
-        MMC5603_ReadData(&mx, &my, &mz);
-        sum_m[0] += mx; sum_m[1] += my; sum_m[2] += mz;
-
         delay_ms(5); 
     }
+
+    MMC5603_ReadData(&mx, &my, &mz);
 
     gyro_bias[0] = sum_g[0] / sample_count;
     gyro_bias[1] = sum_g[1] / sample_count;
@@ -275,33 +287,21 @@ void AHRS_Calibrate(void)
     ay_cal = sum_a[1] / sample_count;
     az_cal = sum_a[2] / sample_count;
 
-    mx_cal = sum_m[0] / sample_count;
-    my_cal = sum_m[1] / sample_count;
-    mz_cal = sum_m[2] / sample_count;
+    mx_cal = mx;
+    my_cal = my;
+    mz_cal = mz;
 
-    AHRS_Init_Fast(ax_cal, ay_cal, az_cal, mx_cal, my_cal, mz_cal);
-}
-// 静态辅助函数：欧拉角转四元数初始化
-static void AHRS_SetInitialQuaternion(float roll, float pitch, float yaw) 
-{
-    float cr = cosf(roll * 0.5f);
-    float sr = sinf(roll * 0.5f);
-    float cp = cosf(pitch * 0.5f);
-    float sp = sinf(pitch * 0.5f);
-    float cy = cosf(yaw * 0.5f);
-    float sy = sinf(yaw * 0.5f);
+    Mahony_Init();
 
-    q0 = cr * cp * cy + sr * sp * sy;
-    q1 = sr * cp * cy - cr * sp * sy;
-    q2 = cr * sp * cy + sr * cp * sy;
-    q3 = cr * cp * sy - sr * sp * cy;
+    Mahony_Init_Fast(ax_cal, ay_cal, az_cal, mx_cal, my_cal, mz_cal);
 }
+
 //------------------------------------------------------------
 //  @brief 快速对准初始化 (消除启动爬升曲线)
 //  @param ax, ay, az : 初始加速度
 //  @param mx, my, mz : 初始磁力计 (Gauss)
 //------------------------------------------------------------
-void AHRS_Init_Fast(float ax, float ay, float az, float mx, float my, float mz) 
+void Mahony_Init_Fast(float ax, float ay, float az, float mx, float my, float mz) 
 {
     // 1. 重置积分项
     integralFBx = 0.0f; integralFBy = 0.0f; integralFBz = 0.0f;
@@ -333,10 +333,11 @@ void AHRS_Init_Fast(float ax, float ay, float az, float mx, float my, float mz)
 
     float mag_x = mx_imu * cosPitch + my_imu * sinRoll * sinPitch + mz_imu * cosRoll * sinPitch;
     float mag_y = my_imu * cosRoll - mz_imu * sinRoll;
+
     float initialYaw = atan2f(-mag_y, mag_x);
 
     // 6. 将计算结果直接赋值给四元数
-    AHRS_SetInitialQuaternion(initialRoll, initialPitch, initialYaw);
+    Mahony_SetInitialQuaternion(initialRoll, initialPitch, initialYaw);
 }
 
 

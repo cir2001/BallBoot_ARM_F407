@@ -90,6 +90,15 @@
 //--- MMC5603C 3轴数字磁力计----
 // 国产芯片的ADDR因版本不同，为0x30-0x38，需问卖家
 // 芯片版本不同，器件ID返回值不定，因此无需进行ID号读取
+//==========================================================
+// 算法说明
+// Madgwick和Mahony两种姿态解算算法均已移植
+// 融合磁力计数据的频率不同：
+//--- Madgwick算法 ---
+//  需要1ms融合一次磁力计，因为每一毫秒都把“旧的磁力计数据”喂给它，让它时刻保持对 Yaw 的修正力，梯度下降法
+//  需要每1ms都进行磁力计融合，否则Yaw漂移严重
+//--- Mahony算法 ---
+//  可以20ms融合一次磁力计，因为它的内置PI环节可以更好地处理Yaw漂移问题 有记忆逻辑
 //=========================================================
 #include "sys.h"
 #include "usart.h" 
@@ -111,6 +120,7 @@
 #include "esp01s.h"
 #include "icm42688.h"
 #include "mmc5603.h" 
+#include "madgwick.h"
 
 #include "FreeRTOS.h"
 #include "task.h"   
@@ -248,9 +258,14 @@ int main(void)
         OLED_Refresh_Gram();
         delay_ms(500); 
         // --- 初始化 AHRS 算法 ---
-        //AHRS_Init();
-        AHRS_Calibrate(); // 启动时自动校准，需保持机器人静止
-        OLED_ShowString(0, 16, (u8*)"ICM Done!   ", 16);
+        #if EN_MAHONY
+		    Mahony_Calibrate();
+		#endif
+		#if EN_MADGWICK
+		    Madgwick_Calibrate();
+		#endif	
+
+        OLED_ShowString(0, 16, (u8*)"IMU Finished!   ", 16);
         OLED_Refresh_Gram();
         delay_ms(1000);
     }

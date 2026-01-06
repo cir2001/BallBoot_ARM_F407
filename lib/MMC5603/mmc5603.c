@@ -59,33 +59,36 @@ void MMC5603_ReadData(float *mx, float *my, float *mz)
 {
     uint8_t buf[9];
     uint32_t raw_x, raw_y, raw_z;
-
-    // 等待数据就绪
     uint8_t status;
-    uint16_t timeout = 1000;
-    do {
-        status = MMC_Read(MMC5603_REG_STATUS);
-        timeout--;
-        if (timeout == 0) return; 
-    } while (!(status & 0x40)); // 检查 Meas_m_done 位
 
-    // 硬件I2C连续读取9字节 (Burst Read)
+    // 1. 读取状态寄存器 (只读一次，绝不循环！)
+    status = MMC_Read(MMC5603_REG_STATUS);
+
+    // 2. 检查数据是否就绪 (Bit 6: Meas_m_done)
+    if (!(status & 0x40)) 
+    {
+        // 关键修改：如果没准备好，直接返回！不要等！
+        // 保持 mx, my, mz 为上一次的值 (或者全局变量里的旧值)
+        return; 
+    }
+
+    // 3. 数据已就绪，硬件I2C连续读取
     if (I2C_Read_Regs(MMC5603_ADDR, MMC5603_REG_DATA, buf, 9) != 0)
     {
         return; // 读取失败
     }
 
-    // 数据组合
+    // 4. 数据拼接与转换
     raw_x = (uint32_t)buf[0] << 12 | (uint32_t)buf[1] << 4 | (buf[6] >> 4);
     raw_y = (uint32_t)buf[2] << 12 | (uint32_t)buf[3] << 4 | (buf[7] >> 4);
     raw_z = (uint32_t)buf[4] << 12 | (uint32_t)buf[5] << 4 | (buf[8] >> 4);
 
-    // 转换为Gauss
+    // 转换公式 (根据手册: Output / 16384 = Gauss)
+    // 减去 524288 是因为 20位无符号数的中点是 2^19
     *mx = ((float)raw_x - 524288.0f) / 16384.0f;
     *my = ((float)raw_y - 524288.0f) / 16384.0f;
     *mz = ((float)raw_z - 524288.0f) / 16384.0f;
 }
-
 
 
 

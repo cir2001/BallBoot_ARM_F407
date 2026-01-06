@@ -6,7 +6,6 @@
 // PB10 -> SCL (AF4)
 // PB11 -> SDA (AF4)
 //////////////////////////////////////////////////////////////////////////////////
-
 // I2C2 初始化
 void I2C_Hardware_Init(void)
 {
@@ -48,12 +47,24 @@ void I2C_Hardware_Init(void)
     I2C2->CR2 &= ~(0x3F);
     I2C2->CR2 |= 42;      // FREQ = 42MHz
 
-    I2C2->CCR &= ~(1 << 15); // 标准模式
-    // T_high + T_low = 10us (100kHz). T_high = T_low = 5us.
-    // CCR = 5us / (1/42MHz) = 5 * 42 = 210 (0xD2)
-    I2C2->CCR = 210;
+    // 开启快速模式 (F/S bit = 1)
+    I2C2->CCR |= (1 << 15);   // Fast Mode
+    // 选择占空比 (DUTY bit)
+    // 0: Duty cycle = 2 (T_low/T_high = 2)
+    // 1: Duty cycle = 16/9 (T_low/T_high = 16/9)
+    // 建议先用 DUTY=0 (2:1)，比较简单
+    I2C2->CCR &= ~(1 << 14);  // DUTY = 0
 
-    I2C2->TRISE = 43;     // 最大上升时间: 1000ns / (1/42M) + 1 = 43
+    // 计算 CCR 值
+    // 400kHz -> 周期 2.5us. T_high = 1/3 * 2.5us = 0.833us
+    // CCR = 0.833us * 42MHz ≈ 35
+    I2C2->CCR &= 0xF000;      // 清除低12位
+    I2C2->CCR |= 35;          // 设置 CCR = 35
+
+    // 计算 TRISE
+    // Fast Mode 最大上升时间 300ns
+    // TRISE = 300ns * 42MHz + 1 ≈ 13
+    I2C2->TRISE = 13;
 
     // 6. 使能 I2C2
     I2C2->CR1 |= 1 << 0;  // PE Enable

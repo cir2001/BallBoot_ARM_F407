@@ -5,6 +5,7 @@
 #include "icm42688.h"
 #include "mahony.h"
 #include "mmc5603.h"
+#include "madgwick.h"
 //////////////////////////////////////////////////////////////////////////////////	
 // 定义一个结构体变量存放角度
 IMU_Angle_t current_angle;
@@ -47,25 +48,30 @@ void EXTI0_IRQHandler(void)
 	float acc_y_g = (float)g_imu_data.acc_y /16384.0f;
 	float acc_z_g = (float)g_imu_data.acc_z /16384.0f;
 
+#if EN_MAHONY
 	if(mag_update_count >= 20)
 	{
 		mag_update_count = 0;
 		MMC5603_ReadData(&g_mag_x, &g_mag_y, &g_mag_z);
 		// 姿态解算 (Mahony 只有 1ms 积分，F407 开启 FPU 后仅需约 50us)
-		AHRS_Update_9axis(gx_rad, gy_rad, gz_rad, 
+		Mahony_Update_9axis(gx_rad, gy_rad, gz_rad, 
 		               acc_x_g, acc_y_g, acc_z_g, 
 		               g_mag_x, g_mag_y, g_mag_z, 0.001f);
-
-		// AHRS_Update_9axis(gx_rad, gy_rad, gz_rad, 
-		// 					acc_x_g, acc_y_g, acc_z_g, 
-		// 					-g_mag_y, g_mag_x, g_mag_z, 0.001f);	
+		
 	}else{
-		AHRS_Update_6axis(gx_rad, gy_rad, gz_rad,
+		Mahony_Update_6axis(gx_rad, gy_rad, gz_rad,
 					  		acc_x_g, acc_y_g, acc_z_g, 0.001f);
 	}	
+	Mahony_GetEulerAngle(&current_angle);
+#endif
 
-	AHRS_GetEulerAngle(&current_angle);
-
+#if EN_MADGWICK
+	MMC5603_ReadData(&g_mag_x, &g_mag_y, &g_mag_z);
+	Madgwick_Update_9axis(gx_rad, gy_rad, gz_rad, 
+					       acc_x_g, acc_y_g, acc_z_g,
+					       g_mag_x, g_mag_y, g_mag_z, 0.001f);
+	Madgwick_GetEulerAngle(&current_angle); 
+#endif
 	// --- 结束计时 ---
     stop_count = DWT->CYCCNT;
 
