@@ -42,7 +42,7 @@ void Mahony_GetEulerAngle(IMU_Angle_t *angle);
 //-------------------------------------------------
 void Mahony_Calibrate(void);
 
-
+void Mahony_SetGains(float kp, float ki);
 
 void Mahony_Init_Fast(float ax, float ay, float az, float mx, float my, float mz);
 

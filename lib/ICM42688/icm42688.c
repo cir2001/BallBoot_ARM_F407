@@ -49,10 +49,20 @@ uint8_t ICM42688_Init(void)
     // 6. 配置陀螺仪与加速度计参数 (ODR 和 量程)
     // 陀螺仪: 2000dps (000), 1kHz ODR (0110) -> 0x06
     ICM_WriteReg(ICM_REG_GYRO_CONFIG0, (0 << 5) | 0x06); 
-    
+
+    // 配置滤波器带宽 (Filter BW)
+    // 0x51: GYRO_CONFIG1. Bits[2:0] -> 0=ODR/2, 1=ODR/4, 2=ODR/5...
+    // 设置为 1 (ODR/4 = 250Hz)，兼顾低噪声和低延迟
+    ICM_WriteReg(ICM_REG_GYRO_CONFIG1, 0x01);
+
     // 加速度计: 16g (000), 1kHz ODR (0110) -> 0x06
     // 加速度计: 2g (011), 1kHz ODR (0110) -> 0x06
+    // ICM_REG_ACCEL_CONFIG0: Bits[7:5] FS_SEL. 0=16g, 1=8g, 2=4g, 3=2g
     ICM_WriteReg(ICM_REG_ACCEL_CONFIG0, (3 << 5) | 0x06);
+    //ICM_WriteReg(ICM_REG_ACCEL_CONFIG0, (1 << 5) | 0x06);
+
+    // 0x53: ACCEL_CONFIG1. Bits[2:0] -> 同样的逻辑
+    ICM_WriteReg(ICM_REG_ACCEL_CONFIG1, 0x01);
 
     // 7. 最后一步：开启电源 (进入低噪声模式)
     // 设置为 0x0F: 开启加速度计(LN)和陀螺仪(LN)
@@ -60,7 +70,7 @@ uint8_t ICM42688_Init(void)
 
     // 8. 等待传感器电路和数字滤波器稳定
     delay_ms(100); // 等待传感器稳定
-    
+
     return 1; // 初始化成功
 }
 

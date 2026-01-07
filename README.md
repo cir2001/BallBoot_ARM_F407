@@ -29,4 +29,7 @@
 - 带磁力计补偿的9轴AHRS解算 ，mahony算法，磁力计每10ms补偿一次，开机带自检和补偿 ICM42688+MMC5603方案   
 # 2026-01-06 V0.9
 - 完善mahony算法，增加Madgwick算法，通过修改exti.h中的EN_MAHONY和EN_MADGWICK切换姿态解算算法
-- 提升I2C的传输速率为400k，解决无论是mahony算法或Madgwick算法在1ms完成9轴解算
+- 提升I2C的传输速率为400k，解决无论是mahony算法或Madgwick算法在1ms完成9轴解算   
+# 2026-01-06 V0.9
+- 解决两种姿态解算算法，Z轴快速旋转yaw的跟随响应问题，但是存在反向踢的问题
+- 解决反向踢的办法，需要再后面根据电机转速的变化，也就是当电机转速有变化，就将mahony的KP和KI赋值0/将Madgwick的beta赋值0

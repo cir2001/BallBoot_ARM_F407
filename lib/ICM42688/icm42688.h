@@ -19,7 +19,10 @@
 #define ICM_REG_INT_SOURCE0   0x65
 
 #define ICM_REG_GYRO_CONFIG0  0x4F  // 正确地址
+#define ICM_REG_GYRO_CONFIG1  0x51
+
 #define ICM_REG_ACCEL_CONFIG0 0x50
+#define ICM_REG_ACCEL_CONFIG1 0x53
 //---------------------------------------------
 typedef struct {
     int16_t acc_x, acc_y, acc_z;

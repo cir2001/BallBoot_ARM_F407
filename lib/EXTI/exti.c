@@ -21,6 +21,8 @@ extern volatile int Target_Speed_M1;
 extern volatile int Target_Speed_M2;
 extern volatile int Target_Speed_M3;
 
+extern volatile float beta;
+
 extern volatile uint8_t g_last_send_index; // 记录待发送的缓冲区索引
 
 extern float g_mag_x, g_mag_y, g_mag_z; // 主循环读到的校准后的磁力计数据
@@ -28,12 +30,10 @@ extern float g_mag_x, g_mag_y, g_mag_z; // 主循环读到的校准后的磁力计数据
 u16 u16EXIT0Count,u16EXIT1Count;	
 
 volatile ICM_Data g_imu_data;
-static int mag_update_count = 0;
 ////////////////////////////////////////////////////////////////////////////////// 
 //外部中断0服务程序
 void EXTI0_IRQHandler(void)
 {
-	mag_update_count++;
 	uint32_t start_count, stop_count; // 用于记录 DWT 计数值
 	// --- 开始计时 ---
     start_count = DWT->CYCCNT;
@@ -49,23 +49,49 @@ void EXTI0_IRQHandler(void)
 	float acc_z_g = (float)g_imu_data.acc_z /16384.0f;
 
 #if EN_MAHONY
-	if(mag_update_count >= 20)
-	{
-		mag_update_count = 0;
-		MMC5603_ReadData(&g_mag_x, &g_mag_y, &g_mag_z);
+	if (fabs(gz_rad) > 0.2f) 
+    {
+        // 1. 快速转动中：电机电流大，磁场干扰大 -> 关掉修正
+        // 只相信陀螺仪，完全忽略磁力计
+        Mahony_SetGains(0.0f, 0.0f); 
+    }
+    else
+    {
+        // 2. 静止/慢速：电机电流小 -> 恢复修正
+        // 恢复默认参数 (Kp=1.0f? 看您的宏定义 MAHONY_KP_DEF)
+        Mahony_SetGains(MAHONY_KP_DEF, MAHONY_KI_DEF);
+    }
+	MMC5603_ReadData(&g_mag_x, &g_mag_y, &g_mag_z);
 		// 姿态解算 (Mahony 只有 1ms 积分，F407 开启 FPU 后仅需约 50us)
-		Mahony_Update_9axis(gx_rad, gy_rad, gz_rad, 
-		               acc_x_g, acc_y_g, acc_z_g, 
-		               g_mag_x, g_mag_y, g_mag_z, 0.001f);
-		
-	}else{
-		Mahony_Update_6axis(gx_rad, gy_rad, gz_rad,
-					  		acc_x_g, acc_y_g, acc_z_g, 0.001f);
-	}	
+	Mahony_Update_9axis(gx_rad, gy_rad, gz_rad, 
+					acc_x_g, acc_y_g, acc_z_g, 
+					g_mag_x, g_mag_y, g_mag_z, 0.001f);	
 	Mahony_GetEulerAngle(&current_angle);
 #endif
 
 #if EN_MADGWICK
+
+	// ================= Madgwick算法 动态 Beta 策略 =================
+    // 1. 计算角速度的总能量 (或者只看 Z 轴)
+    float gyro_norm = fabs(gz_rad); // 只看 Yaw 轴旋转速度
+    
+    // 2. 设定阈值 (单位: rad/s)
+    // 0.1 rad/s ≈ 5.7度/秒
+    if (gyro_norm > 0.2f) 
+    {
+        // === 快速转动中 ===
+        // 降低 beta，甚至降为 0
+        // 此时只相信陀螺仪积分，完全忽略磁力计的“拖拽”
+        // 这样 Yaw 的响应会和陀螺仪一样极其灵敏，没有滞后
+        beta = 0.0f;  
+    }
+    else 
+    {
+        // === 相对静止/慢速 ===
+        // 恢复正常的 beta，利用磁力计慢慢修正漂移
+        beta = 1.5f; 
+    }
+
 	MMC5603_ReadData(&g_mag_x, &g_mag_y, &g_mag_z);
 	Madgwick_Update_9axis(gx_rad, gy_rad, gz_rad, 
 					       acc_x_g, acc_y_g, acc_z_g,
@@ -96,7 +122,7 @@ void EXTI0_IRQHandler(void)
 	if (sample_in_buf_cnt == 9 || sample_in_buf_cnt == 19)
 	{
 		uint8_t c_idx = (sample_in_buf_cnt == 19) ? 1 : 0;
-		//AHRS_GetEulerAngle(&current_angle);
+
 		p_buf->ctrl_info[c_idx].euler[0] = current_angle.roll;
 		p_buf->ctrl_info[c_idx].euler[1] = current_angle.pitch;
 		p_buf->ctrl_info[c_idx].euler[2] = current_angle.yaw;

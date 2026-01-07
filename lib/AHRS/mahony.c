@@ -5,7 +5,6 @@
 #include "mmc5603.h"
 #include <string.h>        // 用于 memset (修复了之前的 >> 错误)
 #include <math.h>
-#include "madgwick.h"
 #include "exti.h"
 // ================= 私有变量 =================
 static volatile float twoKp = MAHONY_KP_DEF; 
@@ -15,7 +14,9 @@ static volatile float integralFBx = 0.0f, integralFBy = 0.0f, integralFBz = 0.0f
 
 static volatile float gyro_bias[3] = {0.0f, 0.0f, 0.0f};
 //static float mag_bias[3] = {-0.164917f, 0.040692f, -0.647417f};
-static float mag_bias[3] = {0.0f, 0.0f, 0.0f};
+
+static float mag_bias[3] = {0.0565f, 0.0540f, -0.5500f};
+static float mag_scale[3] = {1.0f, 0.99f, 1.0f}; // Y轴稍微压缩一点点
 // ================= 内部辅助函数 =================
 static float invSqrt(float x) 
 {
@@ -66,16 +67,26 @@ void Mahony_Update_9axis(float gx, float gy, float gz, float ax, float ay, float
     float hx, hy, hz, bx, bz;
     float vx, vy, vz, wx, wy, wz;
     float ex = 0.0f, ey = 0.0f, ez = 0.0f;
-
-    // 1. 先扣除偏置 (确保与 Update 一致)
+    // =================================================================
+    // 1. 硬铁 (Hard Iron) 去偏
+    // =================================================================
     float mx_adj = mx_raw - mag_bias[0];
     float my_adj = my_raw - mag_bias[1];
     float mz_adj = mz_raw - mag_bias[2];
+    // =================================================================
+    // 2. 软铁 (Soft Iron) 拉圆
+    // =================================================================
+    mx_adj *= mag_scale[0];
+    my_adj *= mag_scale[1];
+    mz_adj *= mag_scale[2];
 
     // 2. 唯一映射 (IMU_X = -Mag_Y, IMU_Y = Mag_X)
+    // float mx = my_adj; 
+    // float my = mx_adj;
+    // float mz = mz_adj;
     float mx = -my_adj; 
-    float my = mx_adj;
-    float mz = mz_adj;
+    float my = -mx_adj;
+    float mz =  mz_adj;
 
     // 1. 扣除陀螺仪零偏 (确保 bias 单位与 gx,gy,gz 一致)
     // 如果 gx 是 rad/s，bias 也必须是 rad/s
@@ -88,52 +99,51 @@ void Mahony_Update_9axis(float gx, float gy, float gz, float ax, float ay, float
     q1q1 = q1 * q1; q1q2 = q1 * q2; q1q3 = q1 * q3;
     q2q2 = q2 * q2; q2q3 = q2 * q3; q3q3 = q3 * q3;
 
+     // 如果加速度计无效，无法校正
+    if((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)) return;
+
     // 3. 加速度计处理：修正 Pitch 和 Roll
     float a_norm_sq = ax * ax + ay * ay + az * az;
     // 如果模长太小（例如小于 0.0001，意味着几乎为0），则跳过本次重力修正
     if (a_norm_sq < 1e-6f) {
     // 传感器数据无效，只进行陀螺仪积分，或者直接返回
-    return; 
+        return; 
     }
 
-    if (a_norm_sq > 0.001f) {
-        recipNorm = invSqrt(a_norm_sq);
-        ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
+    recipNorm = invSqrt(a_norm_sq);
+    ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
 
-        vx = 2.0f * (q1q3 - q0q2);
-        vy = 2.0f * (q0q1 + q2q3);
-        vz = q0q0 - q1q1 - q2q2 + q3q3;
+    vx = 2.0f * (q1q3 - q0q2);
+    vy = 2.0f * (q0q1 + q2q3);
+    vz = q0q0 - q1q1 - q2q2 + q3q3;
 
-        ex = (ay * vz - az * vy);
-        ey = (az * vx - ax * vz);
-        ez = (ax * vy - ay * vx);
-    }
+    ex = (ay * vz - az * vy);
+    ey = (az * vx - ax * vz);
+    ez = (ax * vy - ay * vx);
 
     // 4. 磁力计处理：修正 Yaw (这是解决漂移的关键)
     float m_norm_sq = mx * mx + my * my + mz * mz;
-    if (m_norm_sq > 0.001f) 
-    {
-        recipNorm = invSqrt(m_norm_sq);
-        mx *= recipNorm; my *= recipNorm; mz *= recipNorm;
+    // 归一化磁力计
+    recipNorm = invSqrt(m_norm_sq);
+    mx *= recipNorm; my *= recipNorm; mz *= recipNorm;
 
-        // 将测量磁场转到地理坐标系 (h = q * m * q')
-        hx = 2.0f * (mx * (0.5f - q2q2 - q3q3) + my * (q1q2 - q0q3) + mz * (q1q3 + q0q2));
-        hy = 2.0f * (mx * (q1q2 + q0q3) + my * (0.5f - q1q1 - q3q3) + mz * (q2q3 - q0q1));
-        hz = 2.0f * (mx * (q1q3 - q0q2) + my * (q2q3 + q0q1) + mz * (0.5f - q1q1 - q2q2));
-        
-        bx = sqrtf(hx * hx + hy * hy);
-        bz = hz;
+    // 将测量磁场转到地理坐标系 (h = q * m * q')
+    hx = 2.0f * (mx * (0.5f - q2q2 - q3q3) + my * (q1q2 - q0q3) + mz * (q1q3 + q0q2));
+    hy = 2.0f * (mx * (q1q2 + q0q3) + my * (0.5f - q1q1 - q3q3) + mz * (q2q3 - q0q1));
+    hz = 2.0f * (mx * (q1q3 - q0q2) + my * (q2q3 + q0q1) + mz * (0.5f - q1q1 - q2q2));
+    
+    bx = sqrtf(hx * hx + hy * hy);
+    bz = hz;
 
-        // 将地理参考磁场转回机体坐标系 (w = q' * b * q)
-        wx = 2.0f * (bx * (0.5f - q2q2 - q3q3) + bz * (q1q3 - q0q2));
-        wy = 2.0f * (bx * (q1q2 - q0q3) + bz * (q0q1 + q2q3));
-        wz = 2.0f * (bx * (q1q3 + q0q2) + bz * (0.5f - q1q1 - q2q2));
+    // 将地理参考磁场转回机体坐标系 (w = q' * b * q)
+    wx = 2.0f * (bx * (0.5f - q2q2 - q3q3) + bz * (q1q3 - q0q2));
+    wy = 2.0f * (bx * (q1q2 - q0q3) + bz * (q0q1 + q2q3));
+    wz = 2.0f * (bx * (q1q3 + q0q2) + bz * (0.5f - q1q1 - q2q2));
 
-        // 累加磁场误差项
-        ex += (my * wz - mz * wy);
-        ey += (mz * wx - mx * wz);
-        ez += (mx * wy - my * wx);
-    }
+    // 累加磁场误差项
+    ex += (my * wz - mz * wy);
+    ey += (mz * wx - mx * wz);
+    ez += (mx * wy - my * wx);
 
     // 5. PI 控制
     if (twoKi > 0.0f) {
@@ -169,17 +179,18 @@ void Mahony_Update_6axis(float gx, float gy, float gz, float ax, float ay, float
     gy -= gyro_bias[1];
     gz -= gyro_bias[2];
 
-    //  静态死区过滤 (防止极小的噪声引起积分漂移)
-    // 对于 MPU6500，0.005 rad/s 是一个比较保守的阈值
-    if(fabs(gx) < 0.002f) gx = 0.0f;
-    if(fabs(gy) < 0.002f) gy = 0.0f;
-    if(fabs(gz) < 0.002f) gz = 0.0f;
+    // 如果加速度计无效，无法校正
+    if((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)) return;
 
-    // 1. 如果加速度计数据无效（全0），则无法修正，直接返回
-    if(!((ax != 0.0f) && (ay != 0.0f) && (az != 0.0f))) return;
+    float a_norm_sq = ax * ax + ay * ay + az * az;
 
+    // 如果模长太小（例如小于 0.0001，意味着几乎为0），则跳过本次重力修正
+    if (a_norm_sq < 1e-6f) {
+        // 传感器数据无效，只进行陀螺仪积分，或者直接返回
+        return; 
+    }
     // 2. 加速度数据归一化
-    recipNorm = invSqrt(ax * ax + ay * ay + az * az);
+    recipNorm = invSqrt(a_norm_sq);
     ax *= recipNorm; ay *= recipNorm; az *= recipNorm;
 
     // 3. 估计重力方向
@@ -253,13 +264,15 @@ void Mahony_Calibrate(void)
     float ax_cal = 0.0f, ay_cal = 0.0f, az_cal = 0.0f;
     float mx_cal = 0.0f, my_cal = 0.0f, mz_cal = 0.0f;
 
-    double sum_g[3] = {0.0f, 0.0f, 0.0f};
-    double sum_a[3] = {0.0f, 0.0f, 0.0f};
+    double sum_g[3] = {0.0, 0.0, 0.0};
+    double sum_a[3] = {0.0, 0.0, 0.0};
+    double sum_m[3] = {0.0, 0.0, 0.0};
     
     const int sample_count = 1000;
     
     const float gy_lsb_to_rads = (1.0f / 16.4f) * (3.141592653589793f / 180.0f);
     const float acc_lsb_to_g = (1.0f / 16384.0f); // ±2g range
+    
     
     for(int i = 0; i < sample_count; i++) 
     {
@@ -274,22 +287,22 @@ void Mahony_Calibrate(void)
         az = (float)raw_data.acc_z * acc_lsb_to_g;
         sum_a[0] += ax; sum_a[1] += ay; sum_a[2] += az;
 
-        delay_ms(5); 
+        MMC5603_ReadData(&mx, &my, &mz);
+        sum_m[0] += mx; sum_m[1] += my; sum_m[2] += mz;
+
+        delay_ms(2); 
     }
+    gyro_bias[0] = (float)(sum_g[0] / sample_count);
+    gyro_bias[1] = (float)(sum_g[1] / sample_count);
+    gyro_bias[2] = (float)(sum_g[2] / sample_count);
 
-    MMC5603_ReadData(&mx, &my, &mz);
+    ax_cal = (float)(sum_a[0] / sample_count);
+    ay_cal = (float)(sum_a[1] / sample_count);
+    az_cal = (float)(sum_a[2] / sample_count);
 
-    gyro_bias[0] = sum_g[0] / sample_count;
-    gyro_bias[1] = sum_g[1] / sample_count;
-    gyro_bias[2] = sum_g[2] / sample_count;
-
-    ax_cal = sum_a[0] / sample_count;
-    ay_cal = sum_a[1] / sample_count;
-    az_cal = sum_a[2] / sample_count;
-
-    mx_cal = mx;
-    my_cal = my;
-    mz_cal = mz;
+    mx_cal = (float)(sum_m[0] / sample_count);
+    my_cal = (float)(sum_m[1] / sample_count);
+    mz_cal = (float)(sum_m[2] / sample_count);
 
     Mahony_Init();
 
@@ -303,41 +316,50 @@ void Mahony_Calibrate(void)
 //------------------------------------------------------------
 void Mahony_Init_Fast(float ax, float ay, float az, float mx, float my, float mz) 
 {
-    // 1. 重置积分项
+    // 1. 重置积分项 (这是对的)
     integralFBx = 0.0f; integralFBy = 0.0f; integralFBz = 0.0f;
 
-    // 1. 先扣除偏置 (确保与 Update 一致)
+    // 2. 磁力计去偏 & 拉圆 (这是对的)
     float mx_adj = mx - mag_bias[0];
     float my_adj = my - mag_bias[1];
     float mz_adj = mz - mag_bias[2];
 
-    // 2. 唯一映射 (IMU_X = -Mag_Y, IMU_Y = Mag_X)
-    float mx_imu = -my_adj; 
-    float my_imu = mx_adj;
-    float mz_imu = mz_adj;
+    mx_adj *= mag_scale[0];
+    my_adj *= mag_scale[1];
+    mz_adj *= mag_scale[2];
 
-    // 2. 加速度计归一化
+    float mx_imu = -my_adj; 
+    float my_imu = -mx_adj;  
+    float mz_imu =  mz_adj;
+
+    // 4. 加速度计归一化
     float norm = sqrtf(ax * ax + ay * ay + az * az);
     if (norm < 1e-6f) return;
     ax /= norm; ay /= norm; az /= norm;
 
-    // 3. 计算初始 Roll 和 Pitch (基于重力矢量)
+    // 5. 计算初始 Roll 和 Pitch
     float initialRoll = atan2f(ay, az);
     float initialPitch = asinf(-ax);
 
-    // 5. 倾斜补偿 (计算初始 Yaw)
+    // 6. 倾斜补偿 (计算初始 Yaw)
     float cosRoll = cosf(initialRoll);
     float sinRoll = sinf(initialRoll);
     float cosPitch = cosf(initialPitch);
     float sinPitch = sinf(initialPitch);
 
+    // 标准投影公式
     float mag_x = mx_imu * cosPitch + my_imu * sinRoll * sinPitch + mz_imu * cosRoll * sinPitch;
     float mag_y = my_imu * cosRoll - mz_imu * sinRoll;
 
+    // 7. 计算 Yaw
     float initialYaw = atan2f(-mag_y, mag_x);
 
-    // 6. 将计算结果直接赋值给四元数
+    // 8. 赋值
     Mahony_SetInitialQuaternion(initialRoll, initialPitch, initialYaw);
 }
-
+void Mahony_SetGains(float kp, float ki)
+{
+    twoKp = kp;
+    twoKi = ki;
+}
 

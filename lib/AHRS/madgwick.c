@@ -10,9 +10,8 @@ static volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;
 
 // 传感器校准参数
 static float gyro_bias[3] = {0.0f, 0.0f, 0.0f};
-static float mag_offset[3] = {0.0f, 0.0f, 0.0f}; 
-static float mag_scale[3]  = {1.0f, 1.0f, 1.0f}; 
-static float mag_bias[3] = {0.0f, 0.0f, 0.0f};
+static float mag_bias[3] = {0.0565f, 0.0540f, -0.5500f};
+static float mag_scale[3] = {1.0f, 0.99f, 1.0f}; // Y轴稍微压缩一点点
 // ================= 内部辅助函数 =================
 // 快速平方根倒数
 static float invSqrt(float x) 
@@ -46,13 +45,13 @@ static void Madgwick_SetInitialQuaternion(float roll, float pitch, float yaw)
 void Madgwick_Init(void)
 {
     //beta = MADGWICK_BETA_DEF;
-    beta = 0.1f;
+    beta = 1.5f;
 }
 
 void Madgwick_Set_MagCalib_Data(float offset_x, float offset_y, float offset_z, 
                                 float scale_x,  float scale_y,  float scale_z)
 {
-    mag_offset[0] = offset_x; mag_offset[1] = offset_y; mag_offset[2] = offset_z;
+    mag_bias[0] = offset_x; mag_bias[1] = offset_y; mag_bias[2] = offset_z;
     mag_scale[0] = scale_x;   mag_scale[1] = scale_y;   mag_scale[2] = scale_z;
 }
 // ---------------------------------------------------------------------------------------------------
@@ -66,27 +65,23 @@ void Madgwick_Update_9axis(float gx, float gy, float gz, float ax, float ay, flo
     float hx, hy;
     float _2q0mx, _2q0my, _2q0mz, _2q1mx, _2bx, _2bz, _4bx, _4bz, _2q0, _2q1, _2q2, _2q3, _2q0q2, _2q2q3;
     float q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3, q3q3;
-    float mx_cal, my_cal, mz_cal;
-
-    // // 1. 磁力计校准
-    // mx_cal = (mx_raw - mag_offset[0]) * mag_scale[0];
-    // my_cal = (my_raw - mag_offset[1]) * mag_scale[1];
-    // mz_cal = (mz_raw - mag_offset[2]) * mag_scale[2];
-
-    // // 2. 坐标系对齐 (与之前代码保持一致: IMU_X = -Mag_Y)
-    // float mx = -my_cal; 
-    // float my =  mx_cal;
-    // float mz =  mz_cal;
-
-    // 1. 先扣除偏置 (确保与 Update 一致)
+    // =================================================================
+    // 1. 硬铁 (Hard Iron) 去偏
+    // =================================================================
     float mx_adj = mx_raw - mag_bias[0];
     float my_adj = my_raw - mag_bias[1];
     float mz_adj = mz_raw - mag_bias[2];
+    // =================================================================
+    // 2. 软铁 (Soft Iron) 拉圆
+    // =================================================================
+    mx_adj *= mag_scale[0];
+    my_adj *= mag_scale[1];
+    mz_adj *= mag_scale[2];
 
     // 2. 唯一映射 (IMU_X = -Mag_Y, IMU_Y = Mag_X)
     float mx = -my_adj; 
-    float my = mx_adj;
-    float mz = mz_adj;
+    float my = -mx_adj;
+    float mz =  mz_adj;
 
     // 3. 陀螺仪零偏补偿
     gx -= gyro_bias[0];
@@ -178,11 +173,6 @@ void Madgwick_Update_6axis(float gx, float gy, float gz, float ax, float ay, flo
     gy -= gyro_bias[1];
     gz -= gyro_bias[2];
 
-    // 死区过滤
-    if(fabsf(gx) < 0.002f) gx = 0.0f;
-    if(fabsf(gy) < 0.002f) gy = 0.0f;
-    if(fabsf(gz) < 0.002f) gz = 0.0f;
-
     // 计算四元数导数 (基于陀螺仪)
     qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
     qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
@@ -264,8 +254,9 @@ void Madgwick_Calibrate(void)
     float ax_cal = 0.0f, ay_cal = 0.0f, az_cal = 0.0f;
     float mx_cal = 0.0f, my_cal = 0.0f, mz_cal = 0.0f;
 
-    double sum_g[3] = {0.0f, 0.0f, 0.0f};
-    double sum_a[3] = {0.0f, 0.0f, 0.0f};
+    double sum_g[3] = {0.0, 0.0, 0.0};
+    double sum_a[3] = {0.0, 0.0, 0.0};
+    double sum_m[3] = {0.0, 0.0, 0.0};
     
     const int sample_count = 1000;
     
@@ -285,22 +276,22 @@ void Madgwick_Calibrate(void)
         az = (float)raw_data.acc_z * acc_lsb_to_g;
         sum_a[0] += ax; sum_a[1] += ay; sum_a[2] += az;
 
-        delay_ms(5); 
+        MMC5603_ReadData(&mx, &my, &mz);
+        sum_m[0] += mx; sum_m[1] += my; sum_m[2] += mz;
+
+        delay_ms(2); 
     }
+    gyro_bias[0] = (float)(sum_g[0] / sample_count);
+    gyro_bias[1] = (float)(sum_g[1] / sample_count);
+    gyro_bias[2] = (float)(sum_g[2] / sample_count);
 
-    MMC5603_ReadData(&mx, &my, &mz);
+    ax_cal = (float)(sum_a[0] / sample_count);
+    ay_cal = (float)(sum_a[1] / sample_count);
+    az_cal = (float)(sum_a[2] / sample_count);
 
-    gyro_bias[0] = sum_g[0] / sample_count;
-    gyro_bias[1] = sum_g[1] / sample_count;
-    gyro_bias[2] = sum_g[2] / sample_count;
-
-    ax_cal = sum_a[0] / sample_count;
-    ay_cal = sum_a[1] / sample_count;
-    az_cal = sum_a[2] / sample_count;
-
-    mx_cal = mx;
-    my_cal = my;
-    mz_cal = mz;
+    mx_cal = (float)(sum_m[0] / sample_count);
+    my_cal = (float)(sum_m[1] / sample_count);
+    mz_cal = (float)(sum_m[2] / sample_count);
 
     Madgwick_Init();
     
@@ -313,14 +304,22 @@ void Madgwick_Calibrate(void)
 //------------------------------------------------------------
 void Madgwick_Init_Fast(float ax, float ay, float az, float mx, float my, float mz) 
 {
-    // 1. 先扣除偏置 (确保与 Update 一致)
+    // =================================================================
+    // 1. 硬铁 (Hard Iron) 去偏
+    // =================================================================
     float mx_adj = mx - mag_bias[0];
     float my_adj = my - mag_bias[1];
     float mz_adj = mz - mag_bias[2];
-
-    // 2. 唯一映射 (IMU_X = -Mag_Y, IMU_Y = Mag_X)
+    // =================================================================
+    // 2. 软铁 (Soft Iron) 拉圆
+    // =================================================================
+    mx_adj *= mag_scale[0];
+    my_adj *= mag_scale[1];
+    mz_adj *= mag_scale[2];
+    
+    // 唯一映
     float mx_imu = -my_adj; 
-    float my_imu = mx_adj;
+    float my_imu = -mx_adj;
     float mz_imu = mz_adj;
 
     // 2. 加速度计归一化
